@@ -192,12 +192,12 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
     setTab('lista')
   }
 
-  const handleCodigoLeido = async (codigo) => {
+  const handleCodigoLeido = async (codigo, formato) => {
     setEscanerActivo(false)
     setBuscandoCima(true)
     setErrorScan('')
 
-    const resultado = await buscarMedicamentoPorCodigo(codigo)
+    const resultado = await buscarMedicamentoPorCodigo(codigo, formato)
     setBuscandoCima(false)
 
     if (!resultado.ok) {
@@ -206,6 +206,11 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
     }
 
     setMedEscaneado(resultado.medicamento)
+
+    // Si el DataMatrix trae fecha de caducidad, rellenarla automáticamente
+    if (resultado.medicamento.caducidad) {
+      setScanCaducidad(resultado.medicamento.caducidad)
+    }
   }
 
   const añadirEscaneado = async () => {
@@ -382,8 +387,8 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
               {!escanerActivo && !medEscaneado && !buscandoCima && (
                 <div className="bg-white border border-gray-200 rounded-xl p-6 text-center">
                   <div className="text-4xl mb-3">📷</div>
-                  <div className="text-sm font-medium mb-2">Escanea el código de barras</div>
-                  <div className="text-xs text-gray-500 mb-4">Apunta la cámara al código de barras de la caja del medicamento</div>
+                  <div className="text-sm font-medium mb-2">Escanea el código de la caja</div>
+                  <div className="text-xs text-gray-500 mb-4">Funciona con códigos de barras y DataMatrix (cuadrados con puntos)</div>
                   {errorScan && (
                     <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2 mb-3">
                       ⚠️ {errorScan}
@@ -414,9 +419,14 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
                 <div className="bg-white border border-gray-200 rounded-xl p-4">
                   <div className="text-sm font-medium mb-1 flex items-center gap-2">✅ Medicamento detectado</div>
                   <div className="text-base font-medium mb-1">{medEscaneado.nombre}</div>
-                  {medEscaneado.laboratorio && <div className="text-xs text-gray-400 mb-3">{medEscaneado.laboratorio}</div>}
+                  {medEscaneado.laboratorio && <div className="text-xs text-gray-400 mb-2">{medEscaneado.laboratorio}</div>}
+                  {medEscaneado.caducidad && (
+                    <div className="text-xs text-green-700 bg-green-50 rounded px-2 py-1 mb-3 inline-block">
+                      ✓ Fecha leída del DataMatrix
+                    </div>
+                  )}
                   <div className="mb-3">
-                    <label className="text-xs text-gray-500 mb-1 block">Fecha de caducidad <span className="text-gray-400">(mírala en la caja)</span></label>
+                    <label className="text-xs text-gray-500 mb-1 block">Fecha de caducidad {!medEscaneado.caducidad && <span className="text-gray-400">(mírala en la caja)</span>}</label>
                     <SelectorFecha value={scanCaducidad} onChange={setScanCaducidad} />
                   </div>
                   <div className="mb-3">
