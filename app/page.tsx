@@ -10,7 +10,7 @@ import AppPrincipal from './appPrincipal'
 export default function Home() {
   const [pantalla, setPantalla] = useState('landing')
   const [rol, setRol] = useState('')
-  const [usuario, setUsuario] = useState(null)
+  const [usuario, setUsuario] = useState<any>(null)
 
   return (
     <main className="min-h-screen bg-white max-w-2xl mx-auto px-4">
@@ -190,14 +190,14 @@ export default function Home() {
 
       {/* ═══════════ ROL ═══════════ */}
       {pantalla === 'rol' && (
-        <Rol onSeleccionar={(r) => { setRol(r); setPantalla('registro') }} />
+        <Rol onSeleccionar={(r: string) => { setRol(r); setPantalla('registro') }} />
       )}
 
       {/* ═══════════ REGISTRO ═══════════ */}
       {pantalla === 'registro' && (
         <Registro
           rol={rol}
-          onRegistrado={(u) => { setUsuario(u); setPantalla('app') }}
+          onRegistrado={(u: any) => { setUsuario(u); setPantalla('app') }}
           onVolver={() => setPantalla('rol')}
         />
       )}
@@ -205,7 +205,7 @@ export default function Home() {
       {/* ═══════════ LOGIN ═══════════ */}
       {pantalla === 'login' && (
         <Login
-          onLogin={(u) => { setUsuario(u); setPantalla('app') }}
+          onLogin={(u: any) => { setUsuario(u); setPantalla('app') }}
           onIrARegistro={() => setPantalla('tutorial')}
         />
       )}
