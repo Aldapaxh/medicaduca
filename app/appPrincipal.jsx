@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { buscarMedicamentoPorCodigo } from '../lib/cima'
 import Escaner from './escaner'
+import Perfil from './perfil'
 
 const ICONOS = { analgésico:'💊', antibiótico:'🔬', antihistamínico:'🌿', digestivo:'🫙', vitamina:'🧡', otro:'📦' }
 
@@ -99,6 +100,8 @@ function SelectorFecha({ value, onChange }) {
 }
 
 export default function AppPrincipal({ usuario, onCerrarSesion }) {
+  const [vista, setVista] = useState('app')
+  const [usuarioActual, setUsuarioActual] = useState(usuario)
   const [tab, setTab] = useState('lista')
   const [meds, setMeds] = useState([])
   const [cargando, setCargando] = useState(true)
@@ -115,14 +118,25 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
   const [scanCantidad, setScanCantidad] = useState('')
   const [toast, setToast] = useState('')
   const [errorScan, setErrorScan] = useState('')
+  const [isPremium, setIsPremium] = useState(false)
+  const [exportandoPDF, setExportandoPDF] = useState(false)
 
-  const initials = (usuario?.organizacion || usuario?.nombre || 'U').split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2)
-  const display = usuario?.organizacion || usuario?.nombre || 'Usuario'
-  const extraLabel = EXTRA_LABEL[usuario?.rol]
+  const initials = (usuarioActual?.organizacion || usuarioActual?.nombre || 'U').split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2)
+  const display = usuarioActual?.organizacion || usuarioActual?.nombre || 'Usuario'
+  const extraLabel = EXTRA_LABEL[usuarioActual?.rol]
 
   useEffect(() => {
     cargarMedicamentos()
+    cargarPerfilCompleto()
   }, [])
+
+  const cargarPerfilCompleto = async () => {
+    const { data } = await supabase.from('usuarios').select('*').eq('id', usuario.id).single()
+    if (data) {
+      setUsuarioActual({ ...usuario, ...data })
+      setIsPremium(data.plan === 'premium')
+    }
+  }
 
   const cargarMedicamentos = async () => {
     setCargando(true)
@@ -136,16 +150,52 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
       console.error(error)
       mostrarToast('Error al cargar medicamentos')
     } else {
-      setMeds(data.map(m => ({
+      const medsCargados = data.map(m => ({
         id: m.id,
         nombre: m.nombre,
         categoria: m.categoria,
         cantidad: m.cantidad || '',
         caducidad: fechaCaducidadCorta(m.fecha_caducidad),
         extra: m.extra || '',
-      })))
+      }))
+      setMeds(medsCargados)
+      // Comprobar si hay que enviar notificación
+      comprobarYNotificar(medsCargados)
     }
     setCargando(false)
+  }
+
+  const comprobarYNotificar = async (medsActuales) => {
+    // Recargar perfil para tener datos actualizados
+    const { data: perfil } = await supabase.from('usuarios').select('*').eq('id', usuario.id).single()
+    if (!perfil || !perfil.notificaciones_email) return
+
+    const alertasActuales = medsActuales.filter(m => getEstado(m.caducidad) !== 'ok')
+    if (alertasActuales.length === 0) return
+
+    // Solo notificar máximo una vez al día
+    const ultima = perfil.ultima_notificacion ? new Date(perfil.ultima_notificacion) : null
+    const hoy = new Date()
+    if (ultima && (hoy - ultima) < 86400000) return
+
+    try {
+      await fetch('/api/enviar-aviso', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: perfil.email,
+          nombre: perfil.nombre,
+          medicamentos: alertasActuales.map(m => ({
+            nombre: m.nombre,
+            estado: getEstado(m.caducidad),
+            dias: getDiasTexto(m.caducidad),
+          })),
+        }),
+      })
+      await supabase.from('usuarios').update({ ultima_notificacion: hoy.toISOString() }).eq('id', usuario.id)
+    } catch (e) {
+      console.error('Error notificación:', e)
+    }
   }
 
   const total = meds.length
@@ -206,8 +256,6 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
     }
 
     setMedEscaneado(resultado.medicamento)
-
-    // Si el DataMatrix trae fecha de caducidad, rellenarla automáticamente
     if (resultado.medicamento.caducidad) {
       setScanCaducidad(resultado.medicamento.caducidad)
     }
@@ -250,6 +298,67 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
     setErrorScan('')
   }
 
+  const exportarPDF = async () => {
+    if (!isPremium) {
+      mostrarToast('Exportar PDF es una función Premium')
+      return
+    }
+    setExportandoPDF(true)
+    try {
+      const { default: jsPDF } = await import('jspdf')
+      const autoTableMod = await import('jspdf-autotable')
+      const doc = new jsPDF()
+      doc.setFontSize(20)
+      doc.setTextColor(29, 158, 117)
+      doc.text('MediCaduca', 14, 20)
+      doc.setFontSize(12)
+      doc.setTextColor(100)
+      doc.text(`Botiquín de ${display}`, 14, 28)
+      doc.setFontSize(10)
+      doc.text(`Fecha: ${new Date().toLocaleDateString('es-ES')}`, 14, 34)
+
+      const filas = meds.map(m => [
+        m.nombre,
+        m.categoria,
+        m.cantidad || '-',
+        m.caducidad,
+        getEtiqueta(getEstado(m.caducidad)),
+      ])
+
+      const autoTable = autoTableMod.default || autoTableMod
+      autoTable(doc, {
+        head: [['Medicamento', 'Categoría', 'Cantidad', 'Caducidad', 'Estado']],
+        body: filas,
+        startY: 42,
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [29, 158, 117] },
+      })
+
+      doc.save(`medicaduca-${new Date().toISOString().split('T')[0]}.pdf`)
+      mostrarToast('PDF descargado')
+    } catch (err) {
+      mostrarToast('Error al generar PDF: ' + err.message)
+    }
+    setExportandoPDF(false)
+  }
+
+  const activarPremiumDemo = async () => {
+    await supabase.from('usuarios').update({ plan: 'premium' }).eq('id', usuario.id)
+    setIsPremium(true)
+    mostrarToast('¡Premium activado!')
+  }
+
+  // Vista de perfil
+  if (vista === 'perfil') {
+    return (
+      <Perfil
+        usuario={usuarioActual}
+        onActualizar={(u) => { setUsuarioActual(u); mostrarToast('Perfil actualizado') }}
+        onVolver={() => setVista('app')}
+      />
+    )
+  }
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-5">
 
@@ -259,16 +368,19 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
         <div className="flex items-center gap-2">
           <div className="text-right">
             <div className="text-sm font-medium">{display}</div>
-            <div className="text-xs text-gray-400 capitalize">{usuario?.rol}</div>
+            <div className="text-xs text-gray-400 capitalize">
+              {usuarioActual?.rol}
+              {isPremium && <span className="ml-1 text-amber-600">· Premium</span>}
+            </div>
           </div>
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium ${
-            usuario?.rol === 'hogar' ? 'bg-green-100 text-green-700' :
-            usuario?.rol === 'hospital' ? 'bg-blue-100 text-blue-700' :
-            usuario?.rol === 'farmacia' ? 'bg-amber-100 text-amber-700' :
+          <button onClick={() => setVista('perfil')} className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium ${
+            usuarioActual?.rol === 'hogar' ? 'bg-green-100 text-green-700' :
+            usuarioActual?.rol === 'hospital' ? 'bg-blue-100 text-blue-700' :
+            usuarioActual?.rol === 'farmacia' ? 'bg-amber-100 text-amber-700' :
             'bg-purple-100 text-purple-700'
           }`}>
             {initials}
-          </div>
+          </button>
           <button onClick={onCerrarSesion} className="text-gray-400 text-xs hover:text-gray-600">Salir</button>
         </div>
       </div>
@@ -279,13 +391,15 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
         </div>
       )}
 
-      <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-4 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">Anuncio</span>
-          <span className="text-xs text-gray-500">Seguro de salud desde 19 €/mes — Adeslas</span>
+      {!isPremium && (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-4 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">Anuncio</span>
+            <span className="text-xs text-gray-500">Seguro de salud desde 19 €/mes — Adeslas</span>
+          </div>
+          <button onClick={activarPremiumDemo} className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-medium whitespace-nowrap">👑 Sin anuncios</button>
         </div>
-        <button className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-medium whitespace-nowrap">👑 Sin anuncios</button>
-      </div>
+      )}
 
       <div className="grid grid-cols-3 gap-2 mb-4">
         <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-400">Total</div><div className="text-xl font-medium text-green-600">{total}</div></div>
@@ -307,26 +421,35 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
 
       {/* TAB: LISTA */}
       {tab === 'lista' && (
-        <div className="space-y-2">
-          {cargando && <div className="text-center py-10 text-gray-400 text-sm">Cargando...</div>}
-          {!cargando && meds.length === 0 && <div className="text-center py-10 text-gray-400 text-sm">Sin medicamentos. ¡Añade el primero!</div>}
-          {!cargando && meds.map(m => {
-            const estado = getEstado(m.caducidad)
-            const c = COLORES[estado]
-            return (
-              <div key={m.id} className="bg-white border border-gray-100 rounded-xl px-4 py-3 flex items-center gap-3 hover:border-gray-200">
-                <div className={`w-9 h-9 rounded-lg ${c.fondo} flex items-center justify-center text-lg flex-shrink-0`}>
-                  {ICONOS[m.categoria] || '📦'}
+        <div>
+          {!cargando && meds.length > 0 && (
+            <div className="flex justify-end mb-3">
+              <button onClick={exportarPDF} disabled={exportandoPDF} className={`text-xs px-3 py-1.5 rounded-lg border ${isPremium ? 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100' : 'border-gray-200 text-gray-400'}`}>
+                {exportandoPDF ? '📄 Generando...' : isPremium ? '📄 Exportar PDF' : '📄 Exportar PDF (Premium)'}
+              </button>
+            </div>
+          )}
+          <div className="space-y-2">
+            {cargando && <div className="text-center py-10 text-gray-400 text-sm">Cargando...</div>}
+            {!cargando && meds.length === 0 && <div className="text-center py-10 text-gray-400 text-sm">Sin medicamentos. ¡Añade el primero!</div>}
+            {!cargando && meds.map(m => {
+              const estado = getEstado(m.caducidad)
+              const c = COLORES[estado]
+              return (
+                <div key={m.id} className="bg-white border border-gray-100 rounded-xl px-4 py-3 flex items-center gap-3 hover:border-gray-200">
+                  <div className={`w-9 h-9 rounded-lg ${c.fondo} flex items-center justify-center text-lg flex-shrink-0`}>
+                    {ICONOS[m.categoria] || '📦'}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{m.nombre}</div>
+                    <div className="text-xs text-gray-400">{m.categoria}{m.cantidad ? ` · ${m.cantidad}` : ''}{m.extra ? ` · ${m.extra}` : ''} · {getDiasTexto(m.caducidad)}</div>
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.badge} flex-shrink-0`}>{getEtiqueta(estado)}</span>
+                  <button onClick={() => eliminar(m.id)} className="text-gray-300 hover:text-red-400 flex-shrink-0 text-sm">✕</button>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate">{m.nombre}</div>
-                  <div className="text-xs text-gray-400">{m.categoria}{m.cantidad ? ` · ${m.cantidad}` : ''}{m.extra ? ` · ${m.extra}` : ''} · {getDiasTexto(m.caducidad)}</div>
-                </div>
-                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.badge} flex-shrink-0`}>{getEtiqueta(estado)}</span>
-                <button onClick={() => eliminar(m.id)} className="text-gray-300 hover:text-red-400 flex-shrink-0 text-sm">✕</button>
-              </div>
-            )
-          })}
+              )
+            })}
+          </div>
         </div>
       )}
 
@@ -387,8 +510,8 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
               {!escanerActivo && !medEscaneado && !buscandoCima && (
                 <div className="bg-white border border-gray-200 rounded-xl p-6 text-center">
                   <div className="text-4xl mb-3">📷</div>
-                  <div className="text-sm font-medium mb-2">Escanea el código de la caja</div>
-                  <div className="text-xs text-gray-500 mb-4">Funciona con códigos de barras y DataMatrix (cuadrados con puntos)</div>
+                  <div className="text-sm font-medium mb-2">Escanea el código de barras</div>
+                  <div className="text-xs text-gray-500 mb-4">Pulsa abajo y haz una foto del código</div>
                   {errorScan && (
                     <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2 mb-3">
                       ⚠️ {errorScan}
@@ -411,7 +534,6 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
                 <div className="bg-white border border-gray-200 rounded-xl p-6 text-center">
                   <div className="text-2xl mb-2">🔍</div>
                   <div className="text-sm font-medium">Buscando en CIMA...</div>
-                  <div className="text-xs text-gray-500 mt-1">Consultando la base de datos de medicamentos</div>
                 </div>
               )}
 
@@ -420,13 +542,8 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
                   <div className="text-sm font-medium mb-1 flex items-center gap-2">✅ Medicamento detectado</div>
                   <div className="text-base font-medium mb-1">{medEscaneado.nombre}</div>
                   {medEscaneado.laboratorio && <div className="text-xs text-gray-400 mb-2">{medEscaneado.laboratorio}</div>}
-                  {medEscaneado.caducidad && (
-                    <div className="text-xs text-green-700 bg-green-50 rounded px-2 py-1 mb-3 inline-block">
-                      ✓ Fecha leída del DataMatrix
-                    </div>
-                  )}
                   <div className="mb-3">
-                    <label className="text-xs text-gray-500 mb-1 block">Fecha de caducidad {!medEscaneado.caducidad && <span className="text-gray-400">(mírala en la caja)</span>}</label>
+                    <label className="text-xs text-gray-500 mb-1 block">Fecha de caducidad <span className="text-gray-400">(mírala en la caja)</span></label>
                     <SelectorFecha value={scanCaducidad} onChange={setScanCaducidad} />
                   </div>
                   <div className="mb-3">

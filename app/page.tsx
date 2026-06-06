@@ -127,7 +127,7 @@ export default function Home() {
                 <span className="text-xs bg-amber-400 text-white px-2 py-0.5 rounded-full">Premium</span>
                 <div className="text-2xl font-bold mt-2 text-amber-800">1,99 €</div>
                 <div className="text-xs text-amber-600 mb-3">al mes</div>
-                {['Todo lo de Gratis','Sin anuncios','Exportar PDF','Soporte prioritario'].map((f,i) => <div key={i} className="text-xs flex items-center gap-1.5 mb-1 text-amber-800"><span className="text-amber-600">✓</span>{f}</div>)}
+                {['Sin anuncios','Exportar PDF','Avisos por email','Soporte prioritario'].map((f,i) => <div key={i} className="text-xs flex items-center gap-1.5 mb-1 text-amber-800"><span className="text-amber-600">✓</span>{f}</div>)}
               </div>
             </div>
           </div>
@@ -180,7 +180,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* ═══════════ TUTORIAL ═══════════ */}
       {pantalla === 'tutorial' && (
         <Tutorial
           onFinalizar={() => setPantalla('rol')}
@@ -188,12 +187,10 @@ export default function Home() {
         />
       )}
 
-      {/* ═══════════ ROL ═══════════ */}
       {pantalla === 'rol' && (
         <Rol onSeleccionar={(r: string) => { setRol(r); setPantalla('registro') }} />
       )}
 
-      {/* ═══════════ REGISTRO ═══════════ */}
       {pantalla === 'registro' && (
         <Registro
           rol={rol}
@@ -202,7 +199,6 @@ export default function Home() {
         />
       )}
 
-      {/* ═══════════ LOGIN ═══════════ */}
       {pantalla === 'login' && (
         <Login
           onLogin={(u: any) => { setUsuario(u); setPantalla('app') }}
@@ -210,7 +206,6 @@ export default function Home() {
         />
       )}
 
-      {/* ═══════════ APP PRINCIPAL ═══════════ */}
       {pantalla === 'app' && (
         <AppPrincipal
           usuario={usuario}
