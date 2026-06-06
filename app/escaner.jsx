@@ -5,7 +5,58 @@ import { useRef, useState } from 'react'
 export default function Escaner({ onCodigoLeido, onCancelar }) {
   const inputRef = useRef(null)
   const [procesando, setProcesando] = useState(false)
+  const [progreso, setProgreso] = useState('')
   const [error, setError] = useState('')
+
+  // Procesa una imagen aplicando escala de grises y aumento de contraste
+  const preprocesarImagen = (imageData, factor = 1.5) => {
+    const data = imageData.data
+    const nueva = new ImageData(new Uint8ClampedArray(data), imageData.width, imageData.height)
+    const nuevaData = nueva.data
+
+    for (let i = 0; i < data.length; i += 4) {
+      // Escala de grises
+      const gris = data[i] * 0.299 + data[i+1] * 0.587 + data[i+2] * 0.114
+      // Aumentar contraste
+      const ajustado = Math.max(0, Math.min(255, (gris - 128) * factor + 128))
+      nuevaData[i] = ajustado
+      nuevaData[i+1] = ajustado
+      nuevaData[i+2] = ajustado
+      nuevaData[i+3] = data[i+3]
+    }
+    return nueva
+  }
+
+  // Rota una imageData 90 grados
+  const rotarImagen = (imageData) => {
+    const { width: w, height: h, data } = imageData
+    const rotada = new ImageData(h, w)
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const idxOrig = (y * w + x) * 4
+        const idxRot = (x * h + (h - 1 - y)) * 4
+        rotada.data[idxRot]     = data[idxOrig]
+        rotada.data[idxRot + 1] = data[idxOrig + 1]
+        rotada.data[idxRot + 2] = data[idxOrig + 2]
+        rotada.data[idxRot + 3] = data[idxOrig + 3]
+      }
+    }
+    return rotada
+  }
+
+  const intentarLectura = async (zbarMod, imageData) => {
+    const scanImageData = zbarMod.scanImageData || zbarMod.default?.scanImageData
+    if (!scanImageData) return null
+    const symbols = await scanImageData(imageData)
+    if (symbols && symbols.length > 0) {
+      const symbol = symbols[0]
+      const texto = symbol.decode()
+      const tipoStr = symbol.typeName || ''
+      const formato = tipoStr.toLowerCase().includes('matrix') ? 'DATA_MATRIX' : 'EAN_13'
+      return { texto, formato }
+    }
+    return null
+  }
 
   const handleFoto = async (e) => {
     const archivo = e.target.files?.[0]
@@ -13,9 +64,9 @@ export default function Escaner({ onCodigoLeido, onCancelar }) {
 
     setProcesando(true)
     setError('')
+    setProgreso('Cargando imagen...')
 
     try {
-      // Cargar imagen en un canvas
       const url = URL.createObjectURL(archivo)
       const img = new Image()
       img.src = url
@@ -30,62 +81,77 @@ export default function Escaner({ onCodigoLeido, onCancelar }) {
       canvas.height = img.naturalHeight
       const ctx = canvas.getContext('2d')
       ctx.drawImage(img, 0, 0)
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      const imageDataOriginal = ctx.getImageData(0, 0, canvas.width, canvas.height)
       URL.revokeObjectURL(url)
 
-      // Intentar primero con ZBar (mejor para DataMatrix)
-      try {
-        const zbarMod = await import('@undecaf/zbar-wasm')
-        const scanImageData = zbarMod.scanImageData || zbarMod.default?.scanImageData
-        if (scanImageData) {
-          const symbols = await scanImageData(imageData)
-          if (symbols && symbols.length > 0) {
-            const symbol = symbols[0]
-            const texto = symbol.decode()
-            const tipoStr = symbol.typeName || ''
-            const formato = tipoStr.toLowerCase().includes('matrix') ? 'DATA_MATRIX' : 'EAN_13'
-            onCodigoLeido(texto, formato)
-            return
-          }
-        }
-      } catch (zbarErr) {
-        console.error('ZBar error:', zbarErr)
+      const zbarMod = await import('@undecaf/zbar-wasm')
+
+      // Intento 1: imagen tal cual
+      setProgreso('Intentando leer código...')
+      let resultado = await intentarLectura(zbarMod, imageDataOriginal)
+
+      // Intento 2: escala de grises + contraste moderado
+      if (!resultado) {
+        setProgreso('Procesando imagen (1/3)...')
+        const procesada1 = preprocesarImagen(imageDataOriginal, 1.5)
+        resultado = await intentarLectura(zbarMod, procesada1)
       }
 
-      // Si ZBar falla, intentar con ZXing
+      // Intento 3: escala de grises + contraste fuerte
+      if (!resultado) {
+        setProgreso('Procesando imagen (2/3)...')
+        const procesada2 = preprocesarImagen(imageDataOriginal, 2.5)
+        resultado = await intentarLectura(zbarMod, procesada2)
+      }
+
+      // Intento 4: imagen rotada 90 grados
+      if (!resultado) {
+        setProgreso('Procesando imagen (3/3)...')
+        const rotada = rotarImagen(imageDataOriginal)
+        resultado = await intentarLectura(zbarMod, rotada)
+      }
+
+      // Intento 5: rotada + contraste
+      if (!resultado) {
+        setProgreso('Último intento...')
+        const rotada = rotarImagen(imageDataOriginal)
+        const rotadaContraste = preprocesarImagen(rotada, 2.0)
+        resultado = await intentarLectura(zbarMod, rotadaContraste)
+      }
+
+      if (resultado) {
+        onCodigoLeido(resultado.texto, resultado.formato)
+        return
+      }
+
+      // Si nada funciona, intentar con ZXing como respaldo
       try {
         const { BrowserMultiFormatReader } = await import('@zxing/browser')
         const { DecodeHintType, BarcodeFormat } = await import('@zxing/library')
-
         const hints = new Map()
         hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-          BarcodeFormat.EAN_13,
-          BarcodeFormat.EAN_8,
-          BarcodeFormat.CODE_128,
-          BarcodeFormat.DATA_MATRIX,
+          BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.CODE_128, BarcodeFormat.DATA_MATRIX,
         ])
         hints.set(DecodeHintType.TRY_HARDER, true)
-
         const lector = new BrowserMultiFormatReader(hints)
         const img2 = new Image()
         img2.src = canvas.toDataURL()
         await new Promise((res) => { img2.onload = res })
-
         const result = await lector.decodeFromImageElement(img2)
         const formato = result.getBarcodeFormat()
         const texto = result.getText()
         const formatoStr = formato === 5 ? 'DATA_MATRIX' : 'EAN_13'
         onCodigoLeido(texto, formatoStr)
         return
-      } catch (zxingErr) {
-        // Si tampoco lo lee, mostrar error
-      }
+      } catch (zxingErr) {}
 
-      setError('No se ha podido leer el código. Prueba con mejor luz y enfoque.')
+      setError('No se ha podido leer el código. Prueba acercándote más al DataMatrix.')
       setProcesando(false)
+      setProgreso('')
     } catch (err) {
       setError('Error al procesar la imagen: ' + err.message)
       setProcesando(false)
+      setProgreso('')
     }
   }
 
@@ -104,7 +170,9 @@ export default function Escaner({ onCodigoLeido, onCancelar }) {
       )}
 
       {procesando ? (
-        <div className="text-sm text-gray-500 py-4">🔍 Procesando imagen...</div>
+        <div className="text-sm text-gray-500 py-4">
+          🔍 {progreso || 'Procesando imagen...'}
+        </div>
       ) : (
         <>
           <input
