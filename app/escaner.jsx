@@ -15,20 +15,7 @@ export default function Escaner({ onCodigoLeido, onCancelar }) {
     setError('')
 
     try {
-      const { BrowserMultiFormatReader } = await import('@zxing/browser')
-      const { DecodeHintType, BarcodeFormat } = await import('@zxing/library')
-
-      const hints = new Map()
-      hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-        BarcodeFormat.EAN_13,
-        BarcodeFormat.EAN_8,
-        BarcodeFormat.CODE_128,
-        BarcodeFormat.DATA_MATRIX,
-      ])
-      hints.set(DecodeHintType.TRY_HARDER, true)
-
-      const lector = new BrowserMultiFormatReader(hints)
-
+      // Cargar imagen en un canvas
       const url = URL.createObjectURL(archivo)
       const img = new Image()
       img.src = url
@@ -38,18 +25,64 @@ export default function Escaner({ onCodigoLeido, onCancelar }) {
         img.onerror = reject
       })
 
+      const canvas = document.createElement('canvas')
+      canvas.width = img.naturalWidth
+      canvas.height = img.naturalHeight
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(img, 0, 0)
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      URL.revokeObjectURL(url)
+
+      // Intentar primero con ZBar (mejor para DataMatrix)
       try {
-        const result = await lector.decodeFromImageElement(img)
-        URL.revokeObjectURL(url)
+        const zbarMod = await import('@undecaf/zbar-wasm')
+        const scanImageData = zbarMod.scanImageData || zbarMod.default?.scanImageData
+        if (scanImageData) {
+          const symbols = await scanImageData(imageData)
+          if (symbols && symbols.length > 0) {
+            const symbol = symbols[0]
+            const texto = symbol.decode()
+            const tipoStr = symbol.typeName || ''
+            const formato = tipoStr.toLowerCase().includes('matrix') ? 'DATA_MATRIX' : 'EAN_13'
+            onCodigoLeido(texto, formato)
+            return
+          }
+        }
+      } catch (zbarErr) {
+        console.error('ZBar error:', zbarErr)
+      }
+
+      // Si ZBar falla, intentar con ZXing
+      try {
+        const { BrowserMultiFormatReader } = await import('@zxing/browser')
+        const { DecodeHintType, BarcodeFormat } = await import('@zxing/library')
+
+        const hints = new Map()
+        hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+          BarcodeFormat.EAN_13,
+          BarcodeFormat.EAN_8,
+          BarcodeFormat.CODE_128,
+          BarcodeFormat.DATA_MATRIX,
+        ])
+        hints.set(DecodeHintType.TRY_HARDER, true)
+
+        const lector = new BrowserMultiFormatReader(hints)
+        const img2 = new Image()
+        img2.src = canvas.toDataURL()
+        await new Promise((res) => { img2.onload = res })
+
+        const result = await lector.decodeFromImageElement(img2)
         const formato = result.getBarcodeFormat()
         const texto = result.getText()
         const formatoStr = formato === 5 ? 'DATA_MATRIX' : 'EAN_13'
         onCodigoLeido(texto, formatoStr)
-      } catch (decodeErr) {
-        URL.revokeObjectURL(url)
-        setError('No se ha podido leer el código. Prueba con mejor luz y enfoque.')
-        setProcesando(false)
+        return
+      } catch (zxingErr) {
+        // Si tampoco lo lee, mostrar error
       }
+
+      setError('No se ha podido leer el código. Prueba con mejor luz y enfoque.')
+      setProcesando(false)
     } catch (err) {
       setError('Error al procesar la imagen: ' + err.message)
       setProcesando(false)
