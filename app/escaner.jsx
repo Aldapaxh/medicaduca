@@ -18,9 +18,9 @@ export default function Escaner({ onCodigoLeido, onCancelar }) {
 
         const hints = new Map()
         hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-          BarcodeFormat.DATA_MATRIX,
           BarcodeFormat.EAN_13,
-          BarcodeFormat.QR_CODE,
+          BarcodeFormat.EAN_8,
+          BarcodeFormat.CODE_128,
         ])
         hints.set(DecodeHintType.TRY_HARDER, true)
 
@@ -34,17 +34,14 @@ export default function Escaner({ onCodigoLeido, onCancelar }) {
           videoRef.current,
           (result, err) => {
             if (result && activo) {
-              const formato = result.getBarcodeFormat()
               const texto = result.getText()
-              const formatoStr = formato === 5 ? 'DATA_MATRIX' : formato === 13 ? 'EAN_13' : 'OTRO'
               activo = false
               try { lector.reset() } catch (e) {}
-              onCodigoLeido(texto, formatoStr)
+              onCodigoLeido(texto, 'EAN_13')
             }
           }
         )
 
-        // Aplicar autoenfoque y zoom si el dispositivo lo permite
         try {
           const stream = videoRef.current?.srcObject
           if (stream) {
@@ -96,8 +93,8 @@ export default function Escaner({ onCodigoLeido, onCancelar }) {
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-4 mb-3 text-center">
-      <div className="text-sm font-medium mb-2">📷 Apunta al código de la caja</div>
-      <div className="text-xs text-gray-500 mb-3">DataMatrix (cuadrado de puntos) o código de barras</div>
+      <div className="text-sm font-medium mb-2">📷 Apunta al código de barras</div>
+      <div className="text-xs text-gray-500 mb-3">Las rayas verticales de la caja · Mantén firme a unos 15 cm</div>
       <video
         ref={videoRef}
         className="w-full rounded-lg bg-gray-100 mb-3"
