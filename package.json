@@ -9,6 +9,9 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@capacitor/android": "^8.4.0",
+    "@capacitor/cli": "^8.4.0",
+    "@capacitor/core": "^8.4.0",
     "@stripe/stripe-js": "^9.7.0",
     "@supabase/supabase-js": "^2.106.2",
     "@undecaf/zbar-wasm": "^0.11.0",

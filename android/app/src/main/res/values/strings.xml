@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MediCaduca</string>
+    <string name="title_activity_main">MediCaduca</string>
+    <string name="package_name">com.medicaduca.app</string>
+    <string name="custom_url_scheme">com.medicaduca.app</string>
+</resources>
