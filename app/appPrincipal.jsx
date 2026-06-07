@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import { buscarMedicamentoPorCodigo } from '../lib/cima'
 import Escaner from './escaner'
 import Perfil from './perfil'
+import Compartir from './compartir'
 
 const ICONOS = { analgésico:'💊', antibiótico:'🔬', antihistamínico:'🌿', digestivo:'🫙', vitamina:'🧡', otro:'📦' }
 
@@ -120,15 +121,23 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
   const [errorScan, setErrorScan] = useState('')
   const [isPremium, setIsPremium] = useState(false)
   const [exportandoPDF, setExportandoPDF] = useState(false)
+  const [botiquines, setBotiquines] = useState([]) // [{id, nombre, esMio}]
+  const [botiquinActivo, setBotiquinActivo] = useState(usuario.id)
+  const [invitacionesPendientes, setInvitacionesPendientes] = useState(0)
 
+  const esBotiquinPropio = botiquinActivo === usuario.id
   const initials = (usuarioActual?.organizacion || usuarioActual?.nombre || 'U').split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2)
   const display = usuarioActual?.organizacion || usuarioActual?.nombre || 'Usuario'
   const extraLabel = EXTRA_LABEL[usuarioActual?.rol]
 
   useEffect(() => {
-    cargarMedicamentos()
     cargarPerfilCompleto()
+    cargarBotiquines()
   }, [])
+
+  useEffect(() => {
+    cargarMedicamentos()
+  }, [botiquinActivo])
 
   const cargarPerfilCompleto = async () => {
     const { data } = await supabase.from('usuarios').select('*').eq('id', usuario.id).single()
@@ -138,12 +147,48 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
     }
   }
 
+  const cargarBotiquines = async () => {
+    // Botiquines aceptados donde soy invitado
+    const { data: comoMiembro } = await supabase
+      .from('miembros_botiquin')
+      .select('dueno_id')
+      .eq('miembro_id', usuario.id)
+      .eq('estado', 'aceptada')
+
+    let listaBotiquines = [{ id: usuario.id, nombre: 'Mi botiquín', esMio: true }]
+
+    if (comoMiembro && comoMiembro.length > 0) {
+      const ids = comoMiembro.map(m => m.dueno_id)
+      const { data: perfiles } = await supabase
+        .from('usuarios')
+        .select('id, nombre')
+        .in('id', ids)
+
+      if (perfiles) {
+        perfiles.forEach(p => {
+          listaBotiquines.push({ id: p.id, nombre: `Botiquín de ${p.nombre}`, esMio: false })
+        })
+      }
+    }
+
+    setBotiquines(listaBotiquines)
+
+    // Contar invitaciones pendientes
+    const { count } = await supabase
+      .from('miembros_botiquin')
+      .select('id', { count: 'exact', head: true })
+      .eq('miembro_id', usuario.id)
+      .eq('estado', 'pendiente')
+
+    setInvitacionesPendientes(count || 0)
+  }
+
   const cargarMedicamentos = async () => {
     setCargando(true)
     const { data, error } = await supabase
       .from('medicamentos')
       .select('*')
-      .eq('usuario_id', usuario.id)
+      .eq('usuario_id', botiquinActivo)
       .order('fecha_caducidad', { ascending: true })
 
     if (error) {
@@ -159,21 +204,21 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
         extra: m.extra || '',
       }))
       setMeds(medsCargados)
-      // Comprobar si hay que enviar notificación
-      comprobarYNotificar(medsCargados)
+      // Solo comprobar notificaciones para el botiquín propio
+      if (botiquinActivo === usuario.id) {
+        comprobarYNotificar(medsCargados)
+      }
     }
     setCargando(false)
   }
 
   const comprobarYNotificar = async (medsActuales) => {
-    // Recargar perfil para tener datos actualizados
     const { data: perfil } = await supabase.from('usuarios').select('*').eq('id', usuario.id).single()
     if (!perfil || !perfil.notificaciones_email) return
 
     const alertasActuales = medsActuales.filter(m => getEstado(m.caducidad) !== 'ok')
     if (alertasActuales.length === 0) return
 
-    // Solo notificar máximo una vez al día
     const ultima = perfil.ultima_notificacion ? new Date(perfil.ultima_notificacion) : null
     const hoy = new Date()
     if (ultima && (hoy - ultima) < 86400000) return
@@ -206,6 +251,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
   const mostrarToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 2500) }
 
   const eliminar = async (id) => {
+    if (!esBotiquinPropio) { mostrarToast('Solo el dueño puede eliminar'); return }
     const { error } = await supabase.from('medicamentos').delete().eq('id', id)
     if (error) { mostrarToast('Error al eliminar'); return }
     setMeds(meds.filter(m => m.id !== id))
@@ -213,6 +259,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
   }
 
   const añadir = async () => {
+    if (!esBotiquinPropio) { mostrarToast('Solo el dueño puede añadir'); return }
     if (!nombre || !caducidad || caducidad.includes('undefined')) { mostrarToast('Escribe el nombre y selecciona la fecha'); return }
     const { data, error } = await supabase
       .from('medicamentos')
@@ -262,6 +309,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
   }
 
   const añadirEscaneado = async () => {
+    if (!esBotiquinPropio) { mostrarToast('Solo el dueño puede añadir'); return }
     if (!scanCaducidad || scanCaducidad.includes('undefined')) { mostrarToast('Selecciona la fecha de caducidad'); return }
     const { data, error } = await supabase
       .from('medicamentos')
@@ -313,7 +361,8 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
       doc.text('MediCaduca', 14, 20)
       doc.setFontSize(12)
       doc.setTextColor(100)
-      doc.text(`Botiquín de ${display}`, 14, 28)
+      const botiquinNombre = botiquines.find(b => b.id === botiquinActivo)?.nombre || 'Botiquín'
+      doc.text(botiquinNombre, 14, 28)
       doc.setFontSize(10)
       doc.text(`Fecha: ${new Date().toLocaleDateString('es-ES')}`, 14, 34)
 
@@ -359,6 +408,17 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
     )
   }
 
+  // Vista de compartir
+  if (vista === 'compartir') {
+    return (
+      <Compartir
+        usuario={usuarioActual}
+        isPremium={isPremium}
+        onVolver={() => { setVista('app'); cargarBotiquines() }}
+      />
+    )
+  }
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-5">
 
@@ -373,13 +433,18 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
               {isPremium && <span className="ml-1 text-amber-600">· Premium</span>}
             </div>
           </div>
-          <button onClick={() => setVista('perfil')} className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium ${
+          <button onClick={() => setVista('perfil')} className={`relative w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium ${
             usuarioActual?.rol === 'hogar' ? 'bg-green-100 text-green-700' :
             usuarioActual?.rol === 'hospital' ? 'bg-blue-100 text-blue-700' :
             usuarioActual?.rol === 'farmacia' ? 'bg-amber-100 text-amber-700' :
             'bg-purple-100 text-purple-700'
           }`}>
             {initials}
+            {invitacionesPendientes > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs w-4 h-4 rounded-full flex items-center justify-center">
+                {invitacionesPendientes}
+              </span>
+            )}
           </button>
           <button onClick={onCerrarSesion} className="text-gray-400 text-xs hover:text-gray-600">Salir</button>
         </div>
@@ -391,6 +456,37 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
         </div>
       )}
 
+      {/* SELECTOR DE BOTIQUÍN */}
+      {(botiquines.length > 1 || invitacionesPendientes > 0) && (
+        <div className="bg-gray-50 rounded-xl p-3 mb-4 flex items-center gap-2">
+          <select
+            value={botiquinActivo}
+            onChange={e => setBotiquinActivo(e.target.value)}
+            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+          >
+            {botiquines.map(b => (
+              <option key={b.id} value={b.id}>{b.nombre}</option>
+            ))}
+          </select>
+          <button onClick={() => setVista('compartir')} className="text-xs bg-white border border-gray-200 px-3 py-2 rounded-lg whitespace-nowrap">
+            👥 Compartir
+            {invitacionesPendientes > 0 && (
+              <span className="ml-1 bg-red-500 text-white text-xs px-1.5 rounded-full">{invitacionesPendientes}</span>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* BOTÓN COMPARTIR (cuando aún no hay botiquines compartidos) */}
+      {botiquines.length === 1 && invitacionesPendientes === 0 && (
+        <div className="mb-4 text-right">
+          <button onClick={() => setVista('compartir')} className="text-xs text-green-700 hover:underline">
+            👥 Compartir mi botiquín
+          </button>
+        </div>
+      )}
+
+      {/* ANUNCIO */}
       {!isPremium && (
         <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-4 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
@@ -398,6 +494,12 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
             <span className="text-xs text-gray-500">Seguro de salud desde 19 €/mes — Adeslas</span>
           </div>
           <button onClick={activarPremiumDemo} className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-medium whitespace-nowrap">👑 Sin anuncios</button>
+        </div>
+      )}
+
+      {!esBotiquinPropio && (
+        <div className="bg-blue-50 border border-blue-200 text-blue-700 text-xs rounded-lg px-3 py-2 mb-4">
+          👁️ Estás viendo el botiquín de otro usuario en modo lectura. Solo el dueño puede modificarlo.
         </div>
       )}
 
@@ -410,7 +512,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-4">
         {[
           { id:'lista', label:'💊 Medicamentos' },
-          { id:'añadir', label:'➕ Añadir' },
+          ...(esBotiquinPropio ? [{ id:'añadir', label:'➕ Añadir' }] : []),
           { id:'alertas', label:'🔔 Alertas' },
         ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} className={`flex-1 text-xs py-2 rounded-lg transition-all ${tab === t.id ? 'bg-white font-medium shadow-sm' : 'text-gray-500'}`}>
@@ -422,7 +524,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
       {/* TAB: LISTA */}
       {tab === 'lista' && (
         <div>
-          {!cargando && meds.length > 0 && (
+          {!cargando && meds.length > 0 && esBotiquinPropio && (
             <div className="flex justify-end mb-3">
               <button onClick={exportarPDF} disabled={exportandoPDF} className={`text-xs px-3 py-1.5 rounded-lg border ${isPremium ? 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100' : 'border-gray-200 text-gray-400'}`}>
                 {exportandoPDF ? '📄 Generando...' : isPremium ? '📄 Exportar PDF' : '📄 Exportar PDF (Premium)'}
@@ -431,7 +533,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
           )}
           <div className="space-y-2">
             {cargando && <div className="text-center py-10 text-gray-400 text-sm">Cargando...</div>}
-            {!cargando && meds.length === 0 && <div className="text-center py-10 text-gray-400 text-sm">Sin medicamentos. ¡Añade el primero!</div>}
+            {!cargando && meds.length === 0 && <div className="text-center py-10 text-gray-400 text-sm">Sin medicamentos. {esBotiquinPropio ? '¡Añade el primero!' : ''}</div>}
             {!cargando && meds.map(m => {
               const estado = getEstado(m.caducidad)
               const c = COLORES[estado]
@@ -445,7 +547,9 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
                     <div className="text-xs text-gray-400">{m.categoria}{m.cantidad ? ` · ${m.cantidad}` : ''}{m.extra ? ` · ${m.extra}` : ''} · {getDiasTexto(m.caducidad)}</div>
                   </div>
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.badge} flex-shrink-0`}>{getEtiqueta(estado)}</span>
-                  <button onClick={() => eliminar(m.id)} className="text-gray-300 hover:text-red-400 flex-shrink-0 text-sm">✕</button>
+                  {esBotiquinPropio && (
+                    <button onClick={() => eliminar(m.id)} className="text-gray-300 hover:text-red-400 flex-shrink-0 text-sm">✕</button>
+                  )}
                 </div>
               )
             })}
@@ -453,8 +557,8 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
         </div>
       )}
 
-      {/* TAB: AÑADIR */}
-      {tab === 'añadir' && (
+      {/* TAB: AÑADIR (solo botiquín propio) */}
+      {tab === 'añadir' && esBotiquinPropio && (
         <div className="bg-gray-50 rounded-xl p-4">
           <div className="text-sm font-medium mb-4">💊 Nuevo medicamento</div>
           <div className="flex border border-gray-200 rounded-lg overflow-hidden mb-4">
