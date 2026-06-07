@@ -82,7 +82,9 @@ export default function Compartir({ usuario, isPremium, onVolver }) {
       return
     }
 
-    if (emailInvitar === usuario.email) {
+    const emailLimpio = emailInvitar.trim().toLowerCase()
+
+    if (emailLimpio === usuario.email?.toLowerCase()) {
       setError('No puedes invitarte a ti mismo')
       return
     }
@@ -94,11 +96,11 @@ export default function Compartir({ usuario, isPremium, onVolver }) {
 
     setEnviando(true)
 
-    // Buscar el usuario por email
+    // Buscar el usuario por email (case-insensitive)
     const { data: usuarioInvitado, error: buscarErr } = await supabase
       .from('usuarios')
       .select('id, nombre, email')
-      .eq('email', emailInvitar)
+      .ilike('email', emailLimpio)
       .maybeSingle()
 
     if (buscarErr || !usuarioInvitado) {
