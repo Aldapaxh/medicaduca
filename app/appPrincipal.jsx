@@ -121,9 +121,10 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
   const [errorScan, setErrorScan] = useState('')
   const [isPremium, setIsPremium] = useState(false)
   const [exportandoPDF, setExportandoPDF] = useState(false)
-  const [botiquines, setBotiquines] = useState([]) // [{id, nombre, esMio}]
+  const [botiquines, setBotiquines] = useState([])
   const [botiquinActivo, setBotiquinActivo] = useState(usuario.id)
   const [invitacionesPendientes, setInvitacionesPendientes] = useState(0)
+  const [activandoPremium, setActivandoPremium] = useState(false)
 
   const esBotiquinPropio = botiquinActivo === usuario.id
   const initials = (usuarioActual?.organizacion || usuarioActual?.nombre || 'U').split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2)
@@ -133,6 +134,13 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
   useEffect(() => {
     cargarPerfilCompleto()
     cargarBotiquines()
+    // Comprobar si vuelve de un pago exitoso
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('pago') === 'ok') {
+      mostrarToast('¡Pago realizado! Activando Premium...')
+      window.history.replaceState({}, document.title, '/')
+      setTimeout(() => cargarPerfilCompleto(), 3000)
+    }
   }, [])
 
   useEffect(() => {
@@ -148,7 +156,6 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
   }
 
   const cargarBotiquines = async () => {
-    // Botiquines aceptados donde soy invitado
     const { data: comoMiembro } = await supabase
       .from('miembros_botiquin')
       .select('dueno_id')
@@ -173,7 +180,6 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
 
     setBotiquines(listaBotiquines)
 
-    // Contar invitaciones pendientes
     const { count } = await supabase
       .from('miembros_botiquin')
       .select('id', { count: 'exact', head: true })
@@ -204,7 +210,6 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
         extra: m.extra || '',
       }))
       setMeds(medsCargados)
-      // Solo comprobar notificaciones para el botiquín propio
       if (botiquinActivo === usuario.id) {
         comprobarYNotificar(medsCargados)
       }
@@ -391,13 +396,30 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
     setExportandoPDF(false)
   }
 
-  const activarPremiumDemo = async () => {
-    await supabase.from('usuarios').update({ plan: 'premium' }).eq('id', usuario.id)
-    setIsPremium(true)
-    mostrarToast('¡Premium activado!')
+  const activarPremium = async () => {
+    setActivandoPremium(true)
+    try {
+      const respuesta = await fetch('/api/stripe-checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          usuarioId: usuario.id,
+          email: usuarioActual.email,
+        }),
+      })
+      const data = await respuesta.json()
+      if (data.ok && data.url) {
+        window.location.href = data.url
+      } else {
+        mostrarToast('Error al iniciar pago: ' + (data.error || 'desconocido'))
+        setActivandoPremium(false)
+      }
+    } catch (err) {
+      mostrarToast('Error: ' + err.message)
+      setActivandoPremium(false)
+    }
   }
 
-  // Vista de perfil
   if (vista === 'perfil') {
     return (
       <Perfil
@@ -408,7 +430,6 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
     )
   }
 
-  // Vista de compartir
   if (vista === 'compartir') {
     return (
       <Compartir
@@ -422,7 +443,6 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
   return (
     <div className="max-w-2xl mx-auto px-4 py-5">
 
-      {/* TOPBAR */}
       <div className="flex items-center justify-between mb-4">
         <div className="font-bold text-xl">Medi<span className="text-green-600">Caduca</span></div>
         <div className="flex items-center gap-2">
@@ -456,7 +476,6 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
         </div>
       )}
 
-      {/* SELECTOR DE BOTIQUÍN */}
       {(botiquines.length > 1 || invitacionesPendientes > 0) && (
         <div className="bg-gray-50 rounded-xl p-3 mb-4 flex items-center gap-2">
           <select
@@ -477,7 +496,6 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
         </div>
       )}
 
-      {/* BOTÓN COMPARTIR (cuando aún no hay botiquines compartidos) */}
       {botiquines.length === 1 && invitacionesPendientes === 0 && (
         <div className="mb-4 text-right">
           <button onClick={() => setVista('compartir')} className="text-xs text-green-700 hover:underline">
@@ -486,14 +504,15 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
         </div>
       )}
 
-      {/* ANUNCIO */}
       {!isPremium && (
         <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-4 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">Anuncio</span>
             <span className="text-xs text-gray-500">Seguro de salud desde 19 €/mes — Adeslas</span>
           </div>
-          <button onClick={activarPremiumDemo} className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-medium whitespace-nowrap">👑 Sin anuncios</button>
+          <button onClick={activarPremium} disabled={activandoPremium} className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-medium whitespace-nowrap disabled:opacity-50">
+            {activandoPremium ? '...' : '👑 Sin anuncios — 1,99 €/mes'}
+          </button>
         </div>
       )}
 
@@ -521,7 +540,6 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
         ))}
       </div>
 
-      {/* TAB: LISTA */}
       {tab === 'lista' && (
         <div>
           {!cargando && meds.length > 0 && esBotiquinPropio && (
@@ -557,7 +575,6 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
         </div>
       )}
 
-      {/* TAB: AÑADIR (solo botiquín propio) */}
       {tab === 'añadir' && esBotiquinPropio && (
         <div className="bg-gray-50 rounded-xl p-4">
           <div className="text-sm font-medium mb-4">💊 Nuevo medicamento</div>
@@ -665,7 +682,6 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
         </div>
       )}
 
-      {/* TAB: ALERTAS */}
       {tab === 'alertas' && (
         <div className="space-y-2">
           {alertas.length === 0 && <div className="text-center py-10 text-gray-400 text-sm">✅ Sin alertas pendientes</div>}
