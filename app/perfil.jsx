@@ -20,6 +20,7 @@ export default function Perfil({ usuario, onActualizar, onVolver }) {
     medico: 'Centro de trabajo',
   }
   const labelOrg = ROLE_EXTRA_LABEL[usuario?.rol]
+  const esPremium = usuario?.plan === 'premium'
 
   const guardarPerfil = async () => {
     setError('')
@@ -56,6 +57,29 @@ export default function Perfil({ usuario, onActualizar, onVolver }) {
     setCargando(false)
   }
 
+  const gestionarSuscripcion = async () => {
+    setError('')
+    setMensaje('')
+    setCargando(true)
+    try {
+      const respuesta = await fetch('/api/stripe-portal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usuarioId: usuario.id }),
+      })
+      const data = await respuesta.json()
+      if (data.ok && data.url) {
+        window.location.href = data.url
+      } else {
+        setError('Error: ' + (data.error || 'No se pudo abrir el portal'))
+        setCargando(false)
+      }
+    } catch (err) {
+      setError('Error: ' + err.message)
+      setCargando(false)
+    }
+  }
+
   const eliminarCuenta = async () => {
     setError('')
     if (textoConfirm !== 'ELIMINAR') {
@@ -63,7 +87,6 @@ export default function Perfil({ usuario, onActualizar, onVolver }) {
       return
     }
     setCargando(true)
-    // Eliminar medicamentos y usuario (la auth la maneja Supabase con cascade)
     await supabase.from('medicamentos').delete().eq('usuario_id', usuario.id)
     await supabase.from('usuarios').delete().eq('id', usuario.id)
     await supabase.auth.signOut()
@@ -109,6 +132,16 @@ export default function Perfil({ usuario, onActualizar, onVolver }) {
           Guardar cambios
         </button>
       </div>
+
+      {esPremium && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 mb-4">
+          <div className="text-sm font-medium text-amber-800 mb-1">👑 Suscripción Premium activa</div>
+          <p className="text-xs text-amber-700 mb-3">Gestiona tu suscripción, cambia el método de pago, ve tus facturas o cancela cuando quieras.</p>
+          <button onClick={gestionarSuscripcion} disabled={cargando} className="bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+            {cargando ? 'Abriendo...' : 'Gestionar suscripción'}
+          </button>
+        </div>
+      )}
 
       <div className="bg-gray-50 rounded-xl p-5 mb-4">
         <div className="text-sm font-medium text-gray-500 mb-3">Cambiar contraseña</div>
