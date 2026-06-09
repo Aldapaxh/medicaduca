@@ -2,67 +2,66 @@
 
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { t } from '../lib/traducciones'
 
-const MAX_MIEMBROS = 4 // 4 invitados + 1 dueño = 5
-
-export default function Compartir({ usuario, isPremium, onVolver }) {
+export default function Compartir({ usuario, idioma, isPremium, onVolver }) {
   const [emailInvitar, setEmailInvitar] = useState('')
   const [miembros, setMiembros] = useState([])
-  const [invitacionesRecibidas, setInvitacionesRecibidas] = useState([])
-  const [cargando, setCargando] = useState(true)
-  const [enviando, setEnviando] = useState(false)
-  const [error, setError] = useState('')
+  const [invitaciones, setInvitaciones] = useState([])
+  const [cargando, setCargando] = useState(false)
   const [mensaje, setMensaje] = useState('')
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    cargarDatos()
+    cargarTodo()
   }, [])
 
-  const cargarDatos = async () => {
+  const cargarTodo = async () => {
     setCargando(true)
-    // Miembros que YO he invitado (soy dueño)
-    const { data: misMiembros } = await supabase
+
+    // Miembros que yo he invitado
+    const { data: mios } = await supabase
       .from('miembros_botiquin')
-      .select('id, miembro_id, estado, created_at')
+      .select('*')
       .eq('dueno_id', usuario.id)
 
-    if (misMiembros && misMiembros.length > 0) {
-      const ids = misMiembros.map(m => m.miembro_id)
+    if (mios && mios.length > 0) {
+      const ids = mios.map(m => m.miembro_id)
       const { data: perfiles } = await supabase
         .from('usuarios')
         .select('id, nombre, email')
         .in('id', ids)
 
-      const miembrosCompletos = misMiembros.map(m => {
-        const perfil = perfiles?.find(p => p.id === m.miembro_id)
-        return { ...m, nombre: perfil?.nombre, email: perfil?.email }
+      const miembrosConDatos = mios.map(m => {
+        const p = perfiles?.find(p => p.id === m.miembro_id)
+        return { ...m, nombre: p?.nombre, emailMiembro: p?.email }
       })
-      setMiembros(miembrosCompletos)
+      setMiembros(miembrosConDatos)
     } else {
       setMiembros([])
     }
 
-    // Invitaciones donde YO soy el invitado (pendientes)
-    const { data: invitaciones } = await supabase
+    // Invitaciones pendientes que YO he recibido
+    const { data: pendientes } = await supabase
       .from('miembros_botiquin')
-      .select('id, dueno_id, estado, created_at')
+      .select('*')
       .eq('miembro_id', usuario.id)
       .eq('estado', 'pendiente')
 
-    if (invitaciones && invitaciones.length > 0) {
-      const ids = invitaciones.map(i => i.dueno_id)
+    if (pendientes && pendientes.length > 0) {
+      const ids = pendientes.map(p => p.dueno_id)
       const { data: perfiles } = await supabase
         .from('usuarios')
         .select('id, nombre, email')
         .in('id', ids)
 
-      const invCompletas = invitaciones.map(i => {
-        const perfil = perfiles?.find(p => p.id === i.dueno_id)
-        return { ...i, nombreDueno: perfil?.nombre, emailDueno: perfil?.email }
+      const invitacionesConDatos = pendientes.map(p => {
+        const d = perfiles?.find(u => u.id === p.dueno_id)
+        return { ...p, nombreDueno: d?.nombre, emailDueno: d?.email }
       })
-      setInvitacionesRecibidas(invCompletas)
+      setInvitaciones(invitacionesConDatos)
     } else {
-      setInvitacionesRecibidas([])
+      setInvitaciones([])
     }
 
     setCargando(false)
@@ -71,105 +70,102 @@ export default function Compartir({ usuario, isPremium, onVolver }) {
   const invitar = async () => {
     setError('')
     setMensaje('')
-
-    if (!isPremium) {
-      setError('Invitar miembros es una función Premium')
-      return
-    }
-
     if (!emailInvitar) {
-      setError('Escribe el email de la persona a invitar')
+      setError(t(idioma, 'error_completa_campos'))
+      return
+    }
+    if (emailInvitar === usuario.email) {
+      setError(t(idioma, 'error_generico'))
+      return
+    }
+    if (miembros.length >= 4) {
+      setError(t(idioma, 'limite_invitados'))
       return
     }
 
-    const emailLimpio = emailInvitar.trim().toLowerCase()
+    setCargando(true)
 
-    if (emailLimpio === usuario.email?.toLowerCase()) {
-      setError('No puedes invitarte a ti mismo')
-      return
-    }
-
-    if (miembros.length >= MAX_MIEMBROS) {
-      setError(`Máximo ${MAX_MIEMBROS} invitados por botiquín`)
-      return
-    }
-
-    setEnviando(true)
-
-    // Buscar el usuario por email (case-insensitive)
-    const { data: usuarioInvitado, error: buscarErr } = await supabase
+    // Buscar usuario por email
+    const { data: perfilBuscado } = await supabase
       .from('usuarios')
-      .select('id, nombre, email')
-      .ilike('email', emailLimpio)
+      .select('id, email')
+      .ilike('email', emailInvitar)
+      .single()
+
+    if (!perfilBuscado) {
+      setError(t(idioma, 'error_generico') + ' — Usuario no encontrado')
+      setCargando(false)
+      return
+    }
+
+    // Comprobar si ya existe invitación
+    const { data: existente } = await supabase
+      .from('miembros_botiquin')
+      .select('id')
+      .eq('dueno_id', usuario.id)
+      .eq('miembro_id', perfilBuscado.id)
       .maybeSingle()
 
-    if (buscarErr || !usuarioInvitado) {
-      setError('No existe ningún usuario con ese email. Pídele que se registre en MediCaduca primero.')
-      setEnviando(false)
-      return
-    }
-
-    // Comprobar que no esté ya invitado
-    const yaInvitado = miembros.find(m => m.miembro_id === usuarioInvitado.id)
-    if (yaInvitado) {
-      setError('Ya has invitado a esta persona')
-      setEnviando(false)
+    if (existente) {
+      setError('Ya existe una invitación a este usuario')
+      setCargando(false)
       return
     }
 
     // Crear invitación
-    const { error: insertErr } = await supabase
+    const { error: errInsert } = await supabase
       .from('miembros_botiquin')
       .insert({
         dueno_id: usuario.id,
-        miembro_id: usuarioInvitado.id,
+        miembro_id: perfilBuscado.id,
         estado: 'pendiente',
       })
 
-    if (insertErr) {
-      setError('Error al invitar: ' + insertErr.message)
-    } else {
-      setMensaje(`Invitación enviada a ${usuarioInvitado.nombre}`)
-      setEmailInvitar('')
-      cargarDatos()
+    if (errInsert) {
+      setError(errInsert.message)
+      setCargando(false)
+      return
     }
 
-    setEnviando(false)
+    setMensaje(t(idioma, 'invitacion_enviada'))
+    setEmailInvitar('')
+    cargarTodo()
   }
 
-  const responderInvitacion = async (id, aceptar) => {
-    const { error } = await supabase
-      .from('miembros_botiquin')
-      .update({ estado: aceptar ? 'aceptada' : 'rechazada' })
-      .eq('id', id)
+  const aceptarInvitacion = async (id) => {
+    setCargando(true)
+    await supabase.from('miembros_botiquin').update({ estado: 'aceptada' }).eq('id', id)
+    cargarTodo()
+  }
 
-    if (error) {
-      setError('Error: ' + error.message)
-    } else {
-      setMensaje(aceptar ? 'Invitación aceptada' : 'Invitación rechazada')
-      cargarDatos()
-    }
+  const rechazarInvitacion = async (id) => {
+    setCargando(true)
+    await supabase.from('miembros_botiquin').delete().eq('id', id)
+    cargarTodo()
   }
 
   const eliminarMiembro = async (id) => {
-    const { error } = await supabase
-      .from('miembros_botiquin')
-      .delete()
-      .eq('id', id)
+    setCargando(true)
+    await supabase.from('miembros_botiquin').delete().eq('id', id)
+    cargarTodo()
+  }
 
-    if (error) {
-      setError('Error: ' + error.message)
-    } else {
-      setMensaje('Miembro eliminado')
-      cargarDatos()
-    }
+  if (!isPremium) {
+    return (
+      <div className="max-w-md mx-auto px-4 py-6">
+        <button onClick={onVolver} className="text-sm text-gray-500 mb-4">{t(idioma, 'volver')}</button>
+        <h2 className="text-2xl font-bold mb-4">{t(idioma, 'compartir_titulo')}</h2>
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
+          <p className="text-sm text-amber-800">{t(idioma, 'compartir_premium_aviso')}</p>
+        </div>
+      </div>
+    )
   }
 
   return (
     <div className="max-w-md mx-auto px-4 py-6">
-      <button onClick={onVolver} className="text-sm text-gray-500 mb-4">← Volver</button>
-      <h2 className="text-2xl font-bold mb-1">Compartir botiquín</h2>
-      <p className="text-sm text-gray-500 mb-6">Invita hasta 4 familiares o cuidadores</p>
+      <button onClick={onVolver} className="text-sm text-gray-500 mb-4">{t(idioma, 'volver')}</button>
+      <h2 className="text-2xl font-bold mb-6">{t(idioma, 'compartir_titulo')}</h2>
 
       {mensaje && (
         <div className="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-3 py-2 mb-4">
@@ -182,20 +178,19 @@ export default function Compartir({ usuario, isPremium, onVolver }) {
         </div>
       )}
 
-      {/* Invitaciones recibidas pendientes */}
-      {invitacionesRecibidas.length > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4">
-          <div className="text-sm font-medium text-amber-800 mb-3">📩 Invitaciones recibidas</div>
-          {invitacionesRecibidas.map(inv => (
-            <div key={inv.id} className="bg-white rounded-lg p-3 mb-2">
+      {invitaciones.length > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4">
+          <div className="text-sm font-medium text-blue-800 mb-3">{t(idioma, 'invitaciones_pendientes')}</div>
+          {invitaciones.map(inv => (
+            <div key={inv.id} className="bg-white rounded-lg p-3 mb-2 last:mb-0">
               <div className="text-sm font-medium">{inv.nombreDueno}</div>
-              <div className="text-xs text-gray-500 mb-3">{inv.emailDueno} te invita a su botiquín</div>
+              <div className="text-xs text-gray-500 mb-2">{inv.emailDueno}</div>
               <div className="flex gap-2">
-                <button onClick={() => responderInvitacion(inv.id, true)} className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium">
-                  ✓ Aceptar
+                <button onClick={() => aceptarInvitacion(inv.id)} className="bg-green-600 text-white text-xs px-3 py-1.5 rounded-lg">
+                  {t(idioma, 'aceptar')}
                 </button>
-                <button onClick={() => responderInvitacion(inv.id, false)} className="border border-gray-200 text-gray-500 px-3 py-1.5 rounded-lg text-xs">
-                  ✕ Rechazar
+                <button onClick={() => rechazarInvitacion(inv.id)} className="border border-gray-200 text-gray-500 text-xs px-3 py-1.5 rounded-lg">
+                  {t(idioma, 'rechazar')}
                 </button>
               </div>
             </div>
@@ -203,55 +198,43 @@ export default function Compartir({ usuario, isPremium, onVolver }) {
         </div>
       )}
 
-      {/* Invitar nuevo miembro */}
       <div className="bg-gray-50 rounded-xl p-5 mb-4">
-        <div className="text-sm font-medium text-gray-500 mb-3">
-          Invitar a alguien
-          {!isPremium && <span className="ml-2 text-xs text-amber-600">👑 Solo Premium</span>}
-        </div>
-        <p className="text-xs text-gray-500 mb-3">
-          La persona invitada podrá ver tu botiquín en modo lectura. Solo tú puedes añadir o eliminar medicamentos.
-        </p>
+        <div className="text-sm font-medium text-gray-700 mb-3">{t(idioma, 'invitar_familiar')}</div>
         <input
           type="email"
           value={emailInvitar}
           onChange={e => setEmailInvitar(e.target.value)}
-          placeholder="email@ejemplo.com"
-          disabled={!isPremium || enviando}
-          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-3 disabled:opacity-50"
+          placeholder={t(idioma, 'invitar_email')}
+          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-3"
         />
-        <button
-          onClick={invitar}
-          disabled={!isPremium || enviando}
-          className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
-        >
-          {enviando ? 'Enviando...' : 'Enviar invitación'}
+        <button onClick={invitar} disabled={cargando} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+          {cargando ? t(idioma, 'cargando') : t(idioma, 'invitar_boton')}
         </button>
       </div>
 
-      {/* Miembros actuales */}
       <div className="bg-gray-50 rounded-xl p-5">
-        <div className="text-sm font-medium text-gray-500 mb-3">
-          Miembros de mi botiquín ({miembros.length}/{MAX_MIEMBROS})
-        </div>
-        {cargando && <p className="text-xs text-gray-400">Cargando...</p>}
-        {!cargando && miembros.length === 0 && (
-          <p className="text-xs text-gray-400">Aún no has invitado a nadie</p>
+        <div className="text-sm font-medium text-gray-700 mb-3">{t(idioma, 'miembros_titulo')}</div>
+        {miembros.length === 0 && (
+          <p className="text-sm text-gray-500">{t(idioma, 'sin_miembros')}</p>
         )}
         {miembros.map(m => (
-          <div key={m.id} className="bg-white rounded-lg p-3 mb-2 flex items-center justify-between gap-2">
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium truncate">{m.nombre || 'Sin nombre'}</div>
-              <div className="text-xs text-gray-500 truncate">{m.email}</div>
+          <div key={m.id} className="bg-white rounded-lg p-3 mb-2 last:mb-0 flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium">{m.nombre}</div>
+              <div className="text-xs text-gray-500">{m.emailMiembro}</div>
+              <div className="text-xs mt-1">
+                <span className={`px-2 py-0.5 rounded-full ${
+                  m.estado === 'aceptada' ? 'bg-green-100 text-green-700' :
+                  m.estado === 'pendiente' ? 'bg-amber-100 text-amber-700' :
+                  'bg-gray-100 text-gray-500'
+                }`}>
+                  {m.estado}
+                </span>
+              </div>
             </div>
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-              m.estado === 'aceptada' ? 'bg-green-100 text-green-700' :
-              m.estado === 'rechazada' ? 'bg-red-100 text-red-700' :
-              'bg-amber-100 text-amber-700'
-            }`}>
-              {m.estado === 'aceptada' ? 'Activo' : m.estado === 'rechazada' ? 'Rechazada' : 'Pendiente'}
-            </span>
-            <button onClick={() => eliminarMiembro(m.id)} className="text-gray-300 hover:text-red-400 text-sm">✕</button>
+            <button onClick={() => eliminarMiembro(m.id)} className="text-gray-400 hover:text-red-500 text-sm">
+              {t(idioma, 'eliminar')}
+            </button>
           </div>
         ))}
       </div>

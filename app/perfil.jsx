@@ -2,11 +2,13 @@
 
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { t, IDIOMAS } from '../lib/traducciones'
 
-export default function Perfil({ usuario, onActualizar, onVolver }) {
+export default function Perfil({ usuario, idioma, onCambiarIdioma, onActualizar, onVolver }) {
   const [nombre, setNombre] = useState(usuario?.nombre || '')
   const [organizacion, setOrganizacion] = useState(usuario?.organizacion || '')
   const [notifEmail, setNotifEmail] = useState(usuario?.notificaciones_email || false)
+  const [idiomaElegido, setIdiomaElegido] = useState(idioma || 'es')
   const [nuevaPassword, setNuevaPassword] = useState('')
   const [confirmEliminar, setConfirmEliminar] = useState(false)
   const [textoConfirm, setTextoConfirm] = useState('')
@@ -14,13 +16,20 @@ export default function Perfil({ usuario, onActualizar, onVolver }) {
   const [mensaje, setMensaje] = useState('')
   const [error, setError] = useState('')
 
-  const ROLE_EXTRA_LABEL = {
-    hospital: 'Nombre del hospital',
-    farmacia: 'Nombre de la farmacia',
-    medico: 'Centro de trabajo',
+  const LABELS_ORG = {
+    es: { hospital: 'Nombre del hospital', farmacia: 'Nombre de la farmacia', medico: 'Centro de trabajo' },
+    eu: { hospital: 'Ospitalearen izena', farmacia: 'Farmaziaren izena', medico: 'Lan-zentroa' },
+    ca: { hospital: "Nom de l'hospital", farmacia: 'Nom de la farmàcia', medico: 'Centre de treball' },
   }
-  const labelOrg = ROLE_EXTRA_LABEL[usuario?.rol]
+  const labelOrg = LABELS_ORG[idioma]?.[usuario?.rol] || LABELS_ORG.es[usuario?.rol]
   const esPremium = usuario?.plan === 'premium'
+
+  const TEXTO_CONFIRMACION = {
+    es: 'ELIMINAR',
+    eu: 'EZABATU',
+    ca: 'ELIMINAR',
+  }
+  const palabraConfirmar = TEXTO_CONFIRMACION[idioma] || 'ELIMINAR'
 
   const guardarPerfil = async () => {
     setError('')
@@ -28,13 +37,19 @@ export default function Perfil({ usuario, onActualizar, onVolver }) {
     setCargando(true)
     const { error: dbErr } = await supabase
       .from('usuarios')
-      .update({ nombre, organizacion, notificaciones_email: notifEmail })
+      .update({
+        nombre,
+        organizacion,
+        notificaciones_email: notifEmail,
+        idioma: idiomaElegido,
+      })
       .eq('id', usuario.id)
     if (dbErr) {
-      setError('Error al guardar: ' + dbErr.message)
+      setError(dbErr.message)
     } else {
-      setMensaje('Perfil actualizado correctamente')
-      onActualizar({ ...usuario, nombre, organizacion, notificaciones_email: notifEmail })
+      setMensaje(t(idioma, 'perfil_actualizado'))
+      onCambiarIdioma(idiomaElegido)
+      onActualizar({ ...usuario, nombre, organizacion, notificaciones_email: notifEmail, idioma: idiomaElegido })
     }
     setCargando(false)
   }
@@ -43,15 +58,15 @@ export default function Perfil({ usuario, onActualizar, onVolver }) {
     setError('')
     setMensaje('')
     if (nuevaPassword.length < 6) {
-      setError('La contraseña debe tener al menos 6 caracteres')
+      setError(t(idioma, 'error_password_corta'))
       return
     }
     setCargando(true)
     const { error: authErr } = await supabase.auth.updateUser({ password: nuevaPassword })
     if (authErr) {
-      setError('Error al cambiar contraseña: ' + authErr.message)
+      setError(authErr.message)
     } else {
-      setMensaje('Contraseña cambiada correctamente')
+      setMensaje(t(idioma, 'password_cambiada'))
       setNuevaPassword('')
     }
     setCargando(false)
@@ -71,19 +86,19 @@ export default function Perfil({ usuario, onActualizar, onVolver }) {
       if (data.ok && data.url) {
         window.location.href = data.url
       } else {
-        setError('Error: ' + (data.error || 'No se pudo abrir el portal'))
+        setError(data.error || t(idioma, 'error_generico'))
         setCargando(false)
       }
     } catch (err) {
-      setError('Error: ' + err.message)
+      setError(err.message)
       setCargando(false)
     }
   }
 
   const eliminarCuenta = async () => {
     setError('')
-    if (textoConfirm !== 'ELIMINAR') {
-      setError('Escribe ELIMINAR para confirmar')
+    if (textoConfirm !== palabraConfirmar) {
+      setError(t(idioma, 'escribe_eliminar'))
       return
     }
     setCargando(true)
@@ -97,8 +112,8 @@ export default function Perfil({ usuario, onActualizar, onVolver }) {
 
   return (
     <div className="max-w-md mx-auto px-4 py-6">
-      <button onClick={onVolver} className="text-sm text-gray-500 mb-4">← Volver</button>
-      <h2 className="text-2xl font-bold mb-1">Mi perfil</h2>
+      <button onClick={onVolver} className="text-sm text-gray-500 mb-4">{t(idioma, 'volver')}</button>
+      <h2 className="text-2xl font-bold mb-1">{t(idioma, 'mi_perfil')}</h2>
       <p className="text-sm text-gray-500 mb-6">{usuario?.email}</p>
 
       {mensaje && (
@@ -113,9 +128,9 @@ export default function Perfil({ usuario, onActualizar, onVolver }) {
       )}
 
       <div className="bg-gray-50 rounded-xl p-5 mb-4">
-        <div className="text-sm font-medium text-gray-500 mb-3">Datos personales</div>
+        <div className="text-sm font-medium text-gray-500 mb-3">{t(idioma, 'datos_personales')}</div>
         <div className="mb-3">
-          <label className="text-xs text-gray-500 mb-1 block">Nombre</label>
+          <label className="text-xs text-gray-500 mb-1 block">{t(idioma, 'nombre')}</label>
           <input value={nombre} onChange={e => setNombre(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
         </div>
         {labelOrg && (
@@ -124,50 +139,58 @@ export default function Perfil({ usuario, onActualizar, onVolver }) {
             <input value={organizacion} onChange={e => setOrganizacion(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
           </div>
         )}
+        <div className="mb-3">
+          <label className="text-xs text-gray-500 mb-1 block">{t(idioma, 'idioma')}</label>
+          <select value={idiomaElegido} onChange={e => setIdiomaElegido(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white">
+            {IDIOMAS.map(i => (
+              <option key={i.codigo} value={i.codigo}>{i.nombre}</option>
+            ))}
+          </select>
+        </div>
         <label className="flex items-center gap-2 text-sm mb-3 cursor-pointer">
           <input type="checkbox" checked={notifEmail} onChange={e => setNotifEmail(e.target.checked)} />
-          Recibir avisos por email cuando un medicamento caduque pronto
+          {t(idioma, 'recibir_avisos')}
         </label>
         <button onClick={guardarPerfil} disabled={cargando} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-          Guardar cambios
+          {t(idioma, 'guardar_cambios')}
         </button>
       </div>
 
       {esPremium && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 mb-4">
-          <div className="text-sm font-medium text-amber-800 mb-1">👑 Suscripción Premium activa</div>
-          <p className="text-xs text-amber-700 mb-3">Gestiona tu suscripción, cambia el método de pago, ve tus facturas o cancela cuando quieras.</p>
+          <div className="text-sm font-medium text-amber-800 mb-1">{t(idioma, 'suscripcion_activa')}</div>
+          <p className="text-xs text-amber-700 mb-3">{t(idioma, 'suscripcion_descripcion')}</p>
           <button onClick={gestionarSuscripcion} disabled={cargando} className="bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-            {cargando ? 'Abriendo...' : 'Gestionar suscripción'}
+            {cargando ? t(idioma, 'abriendo') : t(idioma, 'gestionar_suscripcion')}
           </button>
         </div>
       )}
 
       <div className="bg-gray-50 rounded-xl p-5 mb-4">
-        <div className="text-sm font-medium text-gray-500 mb-3">Cambiar contraseña</div>
-        <input type="password" value={nuevaPassword} onChange={e => setNuevaPassword(e.target.value)} placeholder="Nueva contraseña (mín. 6 caracteres)" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-3" />
+        <div className="text-sm font-medium text-gray-500 mb-3">{t(idioma, 'cambiar_password')}</div>
+        <input type="password" value={nuevaPassword} onChange={e => setNuevaPassword(e.target.value)} placeholder={t(idioma, 'nueva_password')} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-3" />
         <button onClick={cambiarPassword} disabled={cargando} className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-          Cambiar contraseña
+          {t(idioma, 'cambiar_password')}
         </button>
       </div>
 
       <div className="bg-red-50 border border-red-200 rounded-xl p-5">
-        <div className="text-sm font-medium text-red-700 mb-2">Zona peligrosa</div>
-        <p className="text-xs text-red-600 mb-3">Eliminar tu cuenta borrará todos tus medicamentos y datos para siempre. No se puede deshacer.</p>
+        <div className="text-sm font-medium text-red-700 mb-2">{t(idioma, 'zona_peligrosa')}</div>
+        <p className="text-xs text-red-600 mb-3">{t(idioma, 'eliminar_cuenta_aviso')}</p>
         {!confirmEliminar ? (
           <button onClick={() => setConfirmEliminar(true)} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium">
-            Eliminar mi cuenta
+            {t(idioma, 'eliminar_mi_cuenta')}
           </button>
         ) : (
           <div>
-            <p className="text-xs text-red-700 mb-2">Escribe <strong>ELIMINAR</strong> para confirmar:</p>
+            <p className="text-xs text-red-700 mb-2">{t(idioma, 'escribe_eliminar').replace('ELIMINAR', palabraConfirmar)} <strong>{palabraConfirmar}</strong></p>
             <input value={textoConfirm} onChange={e => setTextoConfirm(e.target.value)} className="w-full border border-red-300 rounded-lg px-3 py-2 text-sm mb-3" />
             <div className="flex gap-2">
               <button onClick={eliminarCuenta} disabled={cargando} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-                Confirmar eliminación
+                {t(idioma, 'confirmar_eliminacion')}
               </button>
               <button onClick={() => { setConfirmEliminar(false); setTextoConfirm('') }} className="border border-gray-200 text-gray-500 px-4 py-2 rounded-lg text-sm">
-                Cancelar
+                {t(idioma, 'cancelar')}
               </button>
             </div>
           </div>

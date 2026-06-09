@@ -3,14 +3,12 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { buscarMedicamentoPorCodigo } from '../lib/cima'
+import { t } from '../lib/traducciones'
 import Escaner from './escaner'
 import Perfil from './perfil'
 import Compartir from './compartir'
 
 const ICONOS = { analgésico:'💊', antibiótico:'🔬', antihistamínico:'🌿', digestivo:'🫙', vitamina:'🧡', otro:'📦' }
-
-const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
-const AÑOS = Array.from({length:10}, (_,i) => 2024 + i)
 
 function getEstado(caducidad) {
   if (!caducidad) return 'ok'
@@ -28,23 +26,23 @@ function getEstado(caducidad) {
   return 'ok'
 }
 
-function getEtiqueta(estado) {
-  return { ok:'En vigor', pronto:'Caduca pronto', urgente:'Muy pronto', caducado:'Caducado' }[estado]
+function getEtiqueta(estado, idioma) {
+  return t(idioma, 'estado_' + estado)
 }
 
-function getDiasTexto(caducidad) {
-  if (!caducidad) return 'Sin fecha'
+function getDiasTexto(caducidad, idioma) {
+  if (!caducidad) return t(idioma, 'sin_fecha')
   const partes = caducidad.split('-')
-  if (partes.length < 2) return 'Sin fecha'
+  if (partes.length < 2) return t(idioma, 'sin_fecha')
   const y = parseInt(partes[0])
   const m = parseInt(partes[1])
-  if (isNaN(y) || isNaN(m)) return 'Sin fecha'
+  if (isNaN(y) || isNaN(m)) return t(idioma, 'sin_fecha')
   const hoy = new Date()
   const fecha = new Date(y, m, 0)
   const dias = Math.ceil((fecha - hoy) / 86400000)
-  if (dias < 0) return `Caducado hace ${Math.abs(dias)} días`
-  if (dias === 0) return 'Caduca hoy'
-  return `Caduca en ${dias} días`
+  if (dias < 0) return t(idioma, 'dias_caducado', { dias: Math.abs(dias) })
+  if (dias === 0) return t(idioma, 'dias_caduca_hoy')
+  return t(idioma, 'dias_caduca_en', { dias })
 }
 
 const COLORES = {
@@ -54,7 +52,11 @@ const COLORES = {
   caducado: { fondo:'bg-red-50',    badge:'bg-red-100 text-red-700' },
 }
 
-const EXTRA_LABEL = { hospital:'Planta / Unidad', farmacia:'Referencia / Lote', medico:'Paciente / Expediente' }
+const EXTRA_LABEL = {
+  es: { hospital:'Planta / Unidad', farmacia:'Referencia / Lote', medico:'Paciente / Expediente' },
+  eu: { hospital:'Solairua / Unitatea', farmacia:'Erreferentzia / Lotea', medico:'Pazientea / Espedientea' },
+  ca: { hospital:'Planta / Unitat', farmacia:'Referència / Lot', medico:'Pacient / Expedient' },
+}
 
 function fechaCaducidadCompleta(yearMonth) {
   if (!yearMonth) return null
@@ -68,7 +70,9 @@ function fechaCaducidadCorta(fechaCompleta) {
   return fechaCompleta.substring(0, 7)
 }
 
-function SelectorFecha({ value, onChange }) {
+function SelectorFecha({ value, onChange, idioma }) {
+  const MESES = t(idioma, 'meses')
+  const AÑOS = Array.from({length:10}, (_,i) => 2024 + i)
   const partes = value ? value.split('-') : ['', '']
   const añoActual = partes[0] || ''
   const mesActual = partes[1] || ''
@@ -85,13 +89,13 @@ function SelectorFecha({ value, onChange }) {
   return (
     <div className="grid grid-cols-2 gap-2">
       <select value={mesActual} onChange={e => handleMes(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-green-400">
-        <option value="">Mes</option>
+        <option value="">{t(idioma, 'mes')}</option>
         {MESES.map((mes, i) => (
           <option key={i} value={String(i+1).padStart(2,'0')}>{mes}</option>
         ))}
       </select>
       <select value={añoActual} onChange={e => handleAño(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-green-400">
-        <option value="">Año</option>
+        <option value="">{t(idioma, 'anio')}</option>
         {AÑOS.map(a => (
           <option key={a} value={a}>{a}</option>
         ))}
@@ -100,7 +104,7 @@ function SelectorFecha({ value, onChange }) {
   )
 }
 
-export default function AppPrincipal({ usuario, onCerrarSesion }) {
+export default function AppPrincipal({ usuario, idioma, onCambiarIdioma, onCerrarSesion }) {
   const [vista, setVista] = useState('app')
   const [usuarioActual, setUsuarioActual] = useState(usuario)
   const [tab, setTab] = useState('lista')
@@ -129,12 +133,20 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
   const esBotiquinPropio = botiquinActivo === usuario.id
   const initials = (usuarioActual?.organizacion || usuarioActual?.nombre || 'U').split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2)
   const display = usuarioActual?.organizacion || usuarioActual?.nombre || 'Usuario'
-  const extraLabel = EXTRA_LABEL[usuarioActual?.rol]
+  const extraLabel = EXTRA_LABEL[idioma]?.[usuarioActual?.rol] || EXTRA_LABEL.es[usuarioActual?.rol]
+
+  const CATEGORIAS = [
+    { val: 'analgésico', label: t(idioma, 'cat_analgesico') },
+    { val: 'antibiótico', label: t(idioma, 'cat_antibiotico') },
+    { val: 'antihistamínico', label: t(idioma, 'cat_antihistaminico') },
+    { val: 'digestivo', label: t(idioma, 'cat_digestivo') },
+    { val: 'vitamina', label: t(idioma, 'cat_vitamina') },
+    { val: 'otro', label: t(idioma, 'cat_otro') },
+  ]
 
   useEffect(() => {
     cargarPerfilCompleto()
     cargarBotiquines()
-    // Comprobar si vuelve de un pago exitoso
     const params = new URLSearchParams(window.location.search)
     if (params.get('pago') === 'ok') {
       mostrarToast('¡Pago realizado! Activando Premium...')
@@ -162,7 +174,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
       .eq('miembro_id', usuario.id)
       .eq('estado', 'aceptada')
 
-    let listaBotiquines = [{ id: usuario.id, nombre: 'Mi botiquín', esMio: true }]
+    let listaBotiquines = [{ id: usuario.id, nombre: t(idioma, 'mi_botiquin'), esMio: true }]
 
     if (comoMiembro && comoMiembro.length > 0) {
       const ids = comoMiembro.map(m => m.dueno_id)
@@ -173,7 +185,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
 
       if (perfiles) {
         perfiles.forEach(p => {
-          listaBotiquines.push({ id: p.id, nombre: `Botiquín de ${p.nombre}`, esMio: false })
+          listaBotiquines.push({ id: p.id, nombre: `${t(idioma, 'botiquin_de')} ${p.nombre}`, esMio: false })
         })
       }
     }
@@ -199,7 +211,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
 
     if (error) {
       console.error(error)
-      mostrarToast('Error al cargar medicamentos')
+      mostrarToast(t(idioma, 'error_generico'))
     } else {
       const medsCargados = data.map(m => ({
         id: m.id,
@@ -238,7 +250,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
           medicamentos: alertasActuales.map(m => ({
             nombre: m.nombre,
             estado: getEstado(m.caducidad),
-            dias: getDiasTexto(m.caducidad),
+            dias: getDiasTexto(m.caducidad, idioma),
           })),
         }),
       })
@@ -256,16 +268,16 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
   const mostrarToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 2500) }
 
   const eliminar = async (id) => {
-    if (!esBotiquinPropio) { mostrarToast('Solo el dueño puede eliminar'); return }
+    if (!esBotiquinPropio) { mostrarToast(t(idioma, 'solo_dueno_eliminar')); return }
     const { error } = await supabase.from('medicamentos').delete().eq('id', id)
-    if (error) { mostrarToast('Error al eliminar'); return }
+    if (error) { mostrarToast(t(idioma, 'error_generico')); return }
     setMeds(meds.filter(m => m.id !== id))
-    mostrarToast('Medicamento eliminado')
+    mostrarToast(t(idioma, 'medicamento_eliminado'))
   }
 
   const añadir = async () => {
-    if (!esBotiquinPropio) { mostrarToast('Solo el dueño puede añadir'); return }
-    if (!nombre || !caducidad || caducidad.includes('undefined')) { mostrarToast('Escribe el nombre y selecciona la fecha'); return }
+    if (!esBotiquinPropio) { mostrarToast(t(idioma, 'solo_dueno_anadir')); return }
+    if (!nombre || !caducidad || caducidad.includes('undefined')) { mostrarToast(t(idioma, 'rellena_nombre_fecha')); return }
     const { data, error } = await supabase
       .from('medicamentos')
       .insert({
@@ -279,7 +291,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
       .select()
       .single()
 
-    if (error) { mostrarToast('Error al añadir: ' + error.message); return }
+    if (error) { mostrarToast(error.message); return }
 
     setMeds([...meds, {
       id: data.id,
@@ -289,8 +301,9 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
       caducidad: fechaCaducidadCorta(data.fecha_caducidad),
       extra: data.extra || '',
     }])
+    const nombreGuardado = nombre
     setNombre(''); setCaducidad(''); setCantidad(''); setExtra('')
-    mostrarToast(`${nombre} añadido`)
+    mostrarToast(t(idioma, 'medicamento_anadido', { nombre: nombreGuardado }))
     setTab('lista')
   }
 
@@ -314,8 +327,8 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
   }
 
   const añadirEscaneado = async () => {
-    if (!esBotiquinPropio) { mostrarToast('Solo el dueño puede añadir'); return }
-    if (!scanCaducidad || scanCaducidad.includes('undefined')) { mostrarToast('Selecciona la fecha de caducidad'); return }
+    if (!esBotiquinPropio) { mostrarToast(t(idioma, 'solo_dueno_anadir')); return }
+    if (!scanCaducidad || scanCaducidad.includes('undefined')) { mostrarToast(t(idioma, 'rellena_nombre_fecha')); return }
     const { data, error } = await supabase
       .from('medicamentos')
       .insert({
@@ -329,7 +342,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
       .select()
       .single()
 
-    if (error) { mostrarToast('Error al añadir: ' + error.message); return }
+    if (error) { mostrarToast(error.message); return }
 
     setMeds([...meds, {
       id: data.id,
@@ -339,8 +352,9 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
       caducidad: fechaCaducidadCorta(data.fecha_caducidad),
       extra: '',
     }])
+    const nombreGuardado = data.nombre
     setMedEscaneado(null); setScanCaducidad(''); setScanCantidad('')
-    mostrarToast(`${data.nombre} añadido`)
+    mostrarToast(t(idioma, 'medicamento_anadido', { nombre: nombreGuardado }))
     setTab('lista')
   }
 
@@ -353,7 +367,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
 
   const exportarPDF = async () => {
     if (!isPremium) {
-      mostrarToast('Exportar PDF es una función Premium')
+      mostrarToast(t(idioma, 'pdf_premium_aviso'))
       return
     }
     setExportandoPDF(true)
@@ -369,14 +383,14 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
       const botiquinNombre = botiquines.find(b => b.id === botiquinActivo)?.nombre || 'Botiquín'
       doc.text(botiquinNombre, 14, 28)
       doc.setFontSize(10)
-      doc.text(`Fecha: ${new Date().toLocaleDateString('es-ES')}`, 14, 34)
+      doc.text(`${new Date().toLocaleDateString()}`, 14, 34)
 
       const filas = meds.map(m => [
         m.nombre,
         m.categoria,
         m.cantidad || '-',
         m.caducidad,
-        getEtiqueta(getEstado(m.caducidad)),
+        getEtiqueta(getEstado(m.caducidad), idioma),
       ])
 
       const autoTable = autoTableMod.default || autoTableMod
@@ -389,9 +403,9 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
       })
 
       doc.save(`medicaduca-${new Date().toISOString().split('T')[0]}.pdf`)
-      mostrarToast('PDF descargado')
+      mostrarToast(t(idioma, 'pdf_descargado'))
     } catch (err) {
-      mostrarToast('Error al generar PDF: ' + err.message)
+      mostrarToast(err.message)
     }
     setExportandoPDF(false)
   }
@@ -411,11 +425,11 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
       if (data.ok && data.url) {
         window.location.href = data.url
       } else {
-        mostrarToast('Error al iniciar pago: ' + (data.error || 'desconocido'))
+        mostrarToast(data.error || t(idioma, 'error_generico'))
         setActivandoPremium(false)
       }
     } catch (err) {
-      mostrarToast('Error: ' + err.message)
+      mostrarToast(err.message)
       setActivandoPremium(false)
     }
   }
@@ -424,7 +438,9 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
     return (
       <Perfil
         usuario={usuarioActual}
-        onActualizar={(u) => { setUsuarioActual(u); mostrarToast('Perfil actualizado') }}
+        idioma={idioma}
+        onCambiarIdioma={onCambiarIdioma}
+        onActualizar={(u) => { setUsuarioActual(u); mostrarToast(t(idioma, 'perfil_actualizado')) }}
         onVolver={() => setVista('app')}
       />
     )
@@ -434,6 +450,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
     return (
       <Compartir
         usuario={usuarioActual}
+        idioma={idioma}
         isPremium={isPremium}
         onVolver={() => { setVista('app'); cargarBotiquines() }}
       />
@@ -449,7 +466,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
           <div className="text-right">
             <div className="text-sm font-medium">{display}</div>
             <div className="text-xs text-gray-400 capitalize">
-              {usuarioActual?.rol}
+              {t(idioma, 'rol_' + usuarioActual?.rol)}
               {isPremium && <span className="ml-1 text-amber-600">· Premium</span>}
             </div>
           </div>
@@ -466,7 +483,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
               </span>
             )}
           </button>
-          <button onClick={onCerrarSesion} className="text-gray-400 text-xs hover:text-gray-600">Salir</button>
+          <button onClick={onCerrarSesion} className="text-gray-400 text-xs hover:text-gray-600">{t(idioma, 'salir')}</button>
         </div>
       </div>
 
@@ -488,7 +505,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
             ))}
           </select>
           <button onClick={() => setVista('compartir')} className="text-xs bg-white border border-gray-200 px-3 py-2 rounded-lg whitespace-nowrap">
-            👥 Compartir
+            {t(idioma, 'compartir')}
             {invitacionesPendientes > 0 && (
               <span className="ml-1 bg-red-500 text-white text-xs px-1.5 rounded-full">{invitacionesPendientes}</span>
             )}
@@ -499,7 +516,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
       {botiquines.length === 1 && invitacionesPendientes === 0 && (
         <div className="mb-4 text-right">
           <button onClick={() => setVista('compartir')} className="text-xs text-green-700 hover:underline">
-            👥 Compartir mi botiquín
+            {t(idioma, 'compartir_mi_botiquin')}
           </button>
         </div>
       )}
@@ -507,35 +524,35 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
       {!isPremium && (
         <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-4 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">Anuncio</span>
-            <span className="text-xs text-gray-500">Seguro de salud desde 19 €/mes — Adeslas</span>
+            <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">Ad</span>
+            <span className="text-xs text-gray-500">Adeslas</span>
           </div>
           <button onClick={activarPremium} disabled={activandoPremium} className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-medium whitespace-nowrap disabled:opacity-50">
-            {activandoPremium ? '...' : '👑 Sin anuncios — 1,99 €/mes'}
+            {activandoPremium ? '...' : t(idioma, 'sin_anuncios')}
           </button>
         </div>
       )}
 
       {!esBotiquinPropio && (
         <div className="bg-blue-50 border border-blue-200 text-blue-700 text-xs rounded-lg px-3 py-2 mb-4">
-          👁️ Estás viendo el botiquín de otro usuario en modo lectura. Solo el dueño puede modificarlo.
+          {t(idioma, 'modo_lectura')}
         </div>
       )}
 
       <div className="grid grid-cols-3 gap-2 mb-4">
-        <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-400">Total</div><div className="text-xl font-medium text-green-600">{total}</div></div>
-        <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-400">Pronto</div><div className="text-xl font-medium text-amber-500">{pronto}</div></div>
-        <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-400">Caducados</div><div className="text-xl font-medium text-red-500">{caducados}</div></div>
+        <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-400">{t(idioma, 'total')}</div><div className="text-xl font-medium text-green-600">{total}</div></div>
+        <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-400">{t(idioma, 'pronto')}</div><div className="text-xl font-medium text-amber-500">{pronto}</div></div>
+        <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-400">{t(idioma, 'caducados')}</div><div className="text-xl font-medium text-red-500">{caducados}</div></div>
       </div>
 
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-4">
         {[
-          { id:'lista', label:'💊 Medicamentos' },
-          ...(esBotiquinPropio ? [{ id:'añadir', label:'➕ Añadir' }] : []),
-          { id:'alertas', label:'🔔 Alertas' },
-        ].map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} className={`flex-1 text-xs py-2 rounded-lg transition-all ${tab === t.id ? 'bg-white font-medium shadow-sm' : 'text-gray-500'}`}>
-            {t.label}
+          { id:'lista', label: t(idioma, 'tab_medicamentos') },
+          ...(esBotiquinPropio ? [{ id:'añadir', label: t(idioma, 'tab_anadir') }] : []),
+          { id:'alertas', label: t(idioma, 'tab_alertas') },
+        ].map(tabItem => (
+          <button key={tabItem.id} onClick={() => setTab(tabItem.id)} className={`flex-1 text-xs py-2 rounded-lg transition-all ${tab === tabItem.id ? 'bg-white font-medium shadow-sm' : 'text-gray-500'}`}>
+            {tabItem.label}
           </button>
         ))}
       </div>
@@ -545,13 +562,13 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
           {!cargando && meds.length > 0 && esBotiquinPropio && (
             <div className="flex justify-end mb-3">
               <button onClick={exportarPDF} disabled={exportandoPDF} className={`text-xs px-3 py-1.5 rounded-lg border ${isPremium ? 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100' : 'border-gray-200 text-gray-400'}`}>
-                {exportandoPDF ? '📄 Generando...' : isPremium ? '📄 Exportar PDF' : '📄 Exportar PDF (Premium)'}
+                {exportandoPDF ? t(idioma, 'exportar_generando') : isPremium ? t(idioma, 'exportar_pdf') : t(idioma, 'exportar_pdf_premium')}
               </button>
             </div>
           )}
           <div className="space-y-2">
-            {cargando && <div className="text-center py-10 text-gray-400 text-sm">Cargando...</div>}
-            {!cargando && meds.length === 0 && <div className="text-center py-10 text-gray-400 text-sm">Sin medicamentos. {esBotiquinPropio ? '¡Añade el primero!' : ''}</div>}
+            {cargando && <div className="text-center py-10 text-gray-400 text-sm">{t(idioma, 'cargando')}</div>}
+            {!cargando && meds.length === 0 && <div className="text-center py-10 text-gray-400 text-sm">{t(idioma, 'sin_medicamentos')}</div>}
             {!cargando && meds.map(m => {
               const estado = getEstado(m.caducidad)
               const c = COLORES[estado]
@@ -562,9 +579,9 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium truncate">{m.nombre}</div>
-                    <div className="text-xs text-gray-400">{m.categoria}{m.cantidad ? ` · ${m.cantidad}` : ''}{m.extra ? ` · ${m.extra}` : ''} · {getDiasTexto(m.caducidad)}</div>
+                    <div className="text-xs text-gray-400">{m.categoria}{m.cantidad ? ` · ${m.cantidad}` : ''}{m.extra ? ` · ${m.extra}` : ''} · {getDiasTexto(m.caducidad, idioma)}</div>
                   </div>
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.badge} flex-shrink-0`}>{getEtiqueta(estado)}</span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.badge} flex-shrink-0`}>{getEtiqueta(estado, idioma)}</span>
                   {esBotiquinPropio && (
                     <button onClick={() => eliminar(m.id)} className="text-gray-300 hover:text-red-400 flex-shrink-0 text-sm">✕</button>
                   )}
@@ -577,13 +594,13 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
 
       {tab === 'añadir' && esBotiquinPropio && (
         <div className="bg-gray-50 rounded-xl p-4">
-          <div className="text-sm font-medium mb-4">💊 Nuevo medicamento</div>
+          <div className="text-sm font-medium mb-4">{t(idioma, 'nuevo_medicamento')}</div>
           <div className="flex border border-gray-200 rounded-lg overflow-hidden mb-4">
             <button onClick={() => { setModo('manual'); resetEscaneo(); setEscanerActivo(false) }} className={`flex-1 text-xs py-2 flex items-center justify-center gap-1.5 ${modo === 'manual' ? 'bg-gray-900 text-white font-medium' : 'bg-white text-gray-500'}`}>
-              ⌨️ Escribir
+              {t(idioma, 'modo_escribir')}
             </button>
             <button onClick={() => { setModo('scan'); resetEscaneo() }} className={`flex-1 text-xs py-2 flex items-center justify-center gap-1.5 ${modo === 'scan' ? 'bg-gray-900 text-white font-medium' : 'bg-white text-gray-500'}`}>
-              📷 Escanear código
+              {t(idioma, 'modo_escanear')}
             </button>
           </div>
 
@@ -591,28 +608,25 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
             <div>
               <div className="grid grid-cols-2 gap-3 mb-3">
                 <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Nombre</label>
+                  <label className="text-xs text-gray-500 mb-1 block">{t(idioma, 'nombre')}</label>
                   <input value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Ibuprofeno 400mg" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-green-400" />
                 </div>
                 <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Categoría</label>
+                  <label className="text-xs text-gray-500 mb-1 block">{t(idioma, 'categoria')}</label>
                   <select value={categoria} onChange={e => setCategoria(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none">
-                    <option value="analgésico">Analgésico</option>
-                    <option value="antibiótico">Antibiótico</option>
-                    <option value="antihistamínico">Antihistamínico</option>
-                    <option value="digestivo">Digestivo</option>
-                    <option value="vitamina">Vitamina</option>
-                    <option value="otro">Otro</option>
+                    {CATEGORIAS.map(c => (
+                      <option key={c.val} value={c.val}>{c.label}</option>
+                    ))}
                   </select>
                 </div>
               </div>
               <div className="mb-3">
-                <label className="text-xs text-gray-500 mb-1 block">Fecha de caducidad <span className="text-gray-400">(está en la caja)</span></label>
-                <SelectorFecha value={caducidad} onChange={setCaducidad} />
+                <label className="text-xs text-gray-500 mb-1 block">{t(idioma, 'fecha_caducidad')} <span className="text-gray-400">{t(idioma, 'fecha_caducidad_ayuda')}</span></label>
+                <SelectorFecha value={caducidad} onChange={setCaducidad} idioma={idioma} />
               </div>
               <div className="mb-3">
-                <label className="text-xs text-gray-500 mb-1 block">Cantidad (opcional)</label>
-                <input value={cantidad} onChange={e => setCantidad(e.target.value)} placeholder="12 comp." className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-green-400" />
+                <label className="text-xs text-gray-500 mb-1 block">{t(idioma, 'cantidad')}</label>
+                <input value={cantidad} onChange={e => setCantidad(e.target.value)} placeholder="12" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-green-400" />
               </div>
               {extraLabel && (
                 <div className="mb-3">
@@ -621,7 +635,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
                 </div>
               )}
               <button onClick={añadir} className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-800">
-                ➕ Añadir medicamento
+                {t(idioma, 'boton_anadir_medicamento')}
               </button>
             </div>
           )}
@@ -631,15 +645,15 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
               {!escanerActivo && !medEscaneado && !buscandoCima && (
                 <div className="bg-white border border-gray-200 rounded-xl p-6 text-center">
                   <div className="text-4xl mb-3">📷</div>
-                  <div className="text-sm font-medium mb-2">Escanea el código de barras</div>
-                  <div className="text-xs text-gray-500 mb-4">Pulsa abajo y haz una foto del código</div>
+                  <div className="text-sm font-medium mb-2">{t(idioma, 'escanea_codigo')}</div>
+                  <div className="text-xs text-gray-500 mb-4">{t(idioma, 'escanea_ayuda')}</div>
                   {errorScan && (
                     <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2 mb-3">
                       ⚠️ {errorScan}
                     </div>
                   )}
                   <button onClick={() => setEscanerActivo(true)} className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium">
-                    📷 Activar cámara
+                    {t(idioma, 'activar_camara')}
                   </button>
                 </div>
               )}
@@ -654,26 +668,26 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
               {buscandoCima && (
                 <div className="bg-white border border-gray-200 rounded-xl p-6 text-center">
                   <div className="text-2xl mb-2">🔍</div>
-                  <div className="text-sm font-medium">Buscando en CIMA...</div>
+                  <div className="text-sm font-medium">{t(idioma, 'buscando_cima')}</div>
                 </div>
               )}
 
               {medEscaneado && (
                 <div className="bg-white border border-gray-200 rounded-xl p-4">
-                  <div className="text-sm font-medium mb-1 flex items-center gap-2">✅ Medicamento detectado</div>
+                  <div className="text-sm font-medium mb-1 flex items-center gap-2">{t(idioma, 'medicamento_detectado')}</div>
                   <div className="text-base font-medium mb-1">{medEscaneado.nombre}</div>
                   {medEscaneado.laboratorio && <div className="text-xs text-gray-400 mb-2">{medEscaneado.laboratorio}</div>}
                   <div className="mb-3">
-                    <label className="text-xs text-gray-500 mb-1 block">Fecha de caducidad <span className="text-gray-400">(mírala en la caja)</span></label>
-                    <SelectorFecha value={scanCaducidad} onChange={setScanCaducidad} />
+                    <label className="text-xs text-gray-500 mb-1 block">{t(idioma, 'fecha_caducidad')} <span className="text-gray-400">{t(idioma, 'mira_caducidad_caja')}</span></label>
+                    <SelectorFecha value={scanCaducidad} onChange={setScanCaducidad} idioma={idioma} />
                   </div>
                   <div className="mb-3">
-                    <label className="text-xs text-gray-500 mb-1 block">Cantidad (opcional)</label>
-                    <input value={scanCantidad} onChange={e => setScanCantidad(e.target.value)} placeholder="12 comp." className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-green-400" />
+                    <label className="text-xs text-gray-500 mb-1 block">{t(idioma, 'cantidad')}</label>
+                    <input value={scanCantidad} onChange={e => setScanCantidad(e.target.value)} placeholder="12" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-green-400" />
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={añadirEscaneado} className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium">✓ Guardar</button>
-                    <button onClick={resetEscaneo} className="border border-gray-200 text-gray-500 px-4 py-2 rounded-lg text-sm">✕ Cancelar</button>
+                    <button onClick={añadirEscaneado} className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium">{t(idioma, 'guardar_medicamento')}</button>
+                    <button onClick={resetEscaneo} className="border border-gray-200 text-gray-500 px-4 py-2 rounded-lg text-sm">✕ {t(idioma, 'cancelar')}</button>
                   </div>
                 </div>
               )}
@@ -684,7 +698,7 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
 
       {tab === 'alertas' && (
         <div className="space-y-2">
-          {alertas.length === 0 && <div className="text-center py-10 text-gray-400 text-sm">✅ Sin alertas pendientes</div>}
+          {alertas.length === 0 && <div className="text-center py-10 text-gray-400 text-sm">{t(idioma, 'sin_alertas')}</div>}
           {alertas.map(m => {
             const estado = getEstado(m.caducidad)
             const c = COLORES[estado]
@@ -695,9 +709,9 @@ export default function AppPrincipal({ usuario, onCerrarSesion }) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium truncate">{m.nombre}</div>
-                  <div className="text-xs text-gray-400">{getDiasTexto(m.caducidad)}</div>
+                  <div className="text-xs text-gray-400">{getDiasTexto(m.caducidad, idioma)}</div>
                 </div>
-                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.badge}`}>{getEtiqueta(estado)}</span>
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.badge}`}>{getEtiqueta(estado, idioma)}</span>
               </div>
             )
           })}
