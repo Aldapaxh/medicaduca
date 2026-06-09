@@ -33,10 +33,16 @@ export default function Page() {
         .eq('id', session.user.id)
         .single()
       if (perfil) {
-        setUsuario(perfil)
-        if (perfil.idioma) {
-          setIdioma(perfil.idioma)
-          if (typeof window !== 'undefined') localStorage.setItem('idioma_medicaduca', perfil.idioma)
+        // Si el perfil tiene idioma guardado, lo usamos.
+        // Si no, mantenemos el que eligió en el login (localStorage)
+        const idiomaLocal = typeof window !== 'undefined' ? localStorage.getItem('idioma_medicaduca') : null
+        const idiomaAUsar = perfil.idioma || idiomaLocal || 'es'
+        setUsuario({ ...perfil, idioma: idiomaAUsar })
+        setIdioma(idiomaAUsar)
+        if (typeof window !== 'undefined') localStorage.setItem('idioma_medicaduca', idiomaAUsar)
+        // Si el perfil no tenía idioma, lo guardamos en Supabase
+        if (!perfil.idioma && idiomaLocal) {
+          await supabase.from('usuarios').update({ idioma: idiomaLocal }).eq('id', perfil.id)
         }
         setPantalla('app')
         return
@@ -110,8 +116,14 @@ export default function Page() {
         idioma={idioma}
         onCambiarIdioma={cambiarIdioma}
         onLogin={(u: any) => {
-          setUsuario(u)
-          if (u.idioma) cambiarIdioma(u.idioma)
+          // Si el usuario que hace login no tiene idioma guardado, le ponemos el actual
+          const idiomaAUsar = u.idioma || idioma
+          setUsuario({ ...u, idioma: idiomaAUsar })
+          cambiarIdioma(idiomaAUsar)
+          // Guardamos el idioma en su perfil si no lo tenía
+          if (!u.idioma && idioma) {
+            supabase.from('usuarios').update({ idioma }).eq('id', u.id)
+          }
           setPantalla('app')
         }}
         onIrRegistro={() => setPantalla('tutorial')}
