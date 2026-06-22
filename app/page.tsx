@@ -33,14 +33,11 @@ export default function Page() {
         .eq('id', session.user.id)
         .single()
       if (perfil) {
-        // Si hay un idioma elegido en localStorage, manda sobre el del perfil
-        // Solo si no hay nada en localStorage, usamos el del perfil
         const idiomaLocal = typeof window !== 'undefined' ? localStorage.getItem('idioma_medicaduca') : null
         const idiomaAUsar = idiomaLocal || perfil.idioma || 'es'
         setUsuario({ ...perfil, idioma: idiomaAUsar })
         setIdioma(idiomaAUsar)
         if (typeof window !== 'undefined') localStorage.setItem('idioma_medicaduca', idiomaAUsar)
-        // Si el idioma cambió respecto al del perfil, lo actualizamos en Supabase
         if (perfil.idioma !== idiomaAUsar) {
           await supabase.from('usuarios').update({ idioma: idiomaAUsar }).eq('id', perfil.id)
         }
@@ -61,6 +58,25 @@ export default function Page() {
     await supabase.auth.signOut()
     setUsuario(null)
     setPantalla('login')
+  }
+
+  const cargarPerfilCompleto = async (userId: string, fallback: any) => {
+    // Intentamos cargar el perfil completo de Supabase varias veces 
+    // por si el trigger tarda en crearlo
+    for (let i = 0; i < 5; i++) {
+      const { data: perfil } = await supabase
+        .from('usuarios')
+        .select('*')
+        .eq('id', userId)
+        .single()
+      
+      if (perfil && perfil.nombre && perfil.rol) {
+        return perfil
+      }
+      
+      await new Promise(r => setTimeout(r, 500))
+    }
+    return fallback
   }
 
   if (pantalla === 'cargando') {
@@ -101,8 +117,10 @@ export default function Page() {
       <Registro
         idioma={idioma}
         rol={rolElegido}
-        onRegistrado={(u: any) => {
-          setUsuario(u)
+        onRegistrado={async (u: any) => {
+          // Cargamos el perfil completo de Supabase para asegurar nombre y rol
+          const perfilCompleto = await cargarPerfilCompleto(u.id, u)
+          setUsuario({ ...perfilCompleto, idioma })
           setPantalla('app')
         }}
         onIrLogin={() => setPantalla('login')}
@@ -116,10 +134,8 @@ export default function Page() {
         idioma={idioma}
         onCambiarIdioma={cambiarIdioma}
         onLogin={(u: any) => {
-          // Manda el idioma seleccionado en el login (idioma actual del estado)
           setUsuario({ ...u, idioma })
           cambiarIdioma(idioma)
-          // Actualizamos el idioma en Supabase para que se quede guardado
           supabase.from('usuarios').update({ idioma }).eq('id', u.id)
           setPantalla('app')
         }}
