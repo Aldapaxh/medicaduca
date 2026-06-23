@@ -64,7 +64,9 @@ export default function Login({ idioma, onCambiarIdioma, onLogin, onIrRegistro }
       setMensajeOlvido(t(idioma, 'introduce_email'))
       return
     }
-    const { error } = await supabase.auth.resetPasswordForEmail(emailOlvido)
+    const { error } = await supabase.auth.resetPasswordForEmail(emailOlvido, {
+      redirectTo: 'https://medicaduca.vercel.app/restablecer-password',
+    })
     if (error) {
       setMensajeOlvido(error.message)
     } else {
